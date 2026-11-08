@@ -4,8 +4,9 @@ cards=json.loads(urllib.request.urlopen(urllib.request.Request("https://db.ygopr
 by={c["name"].lower():c for c in cards}
 H1=re.compile(r"you can only (use|activate|special summon|normal summon|apply)[^.]*(once per turn|per turn)")
 H2=re.compile(r"you can only use (each|1|one)[^.]*per turn")
+Q=re.compile(r'"[^"]*"')
 def opt(c):
-    t=c["desc"].lower()
+    t=Q.sub('"n"',c["desc"].lower())
     if H1.search(t) or H2.search(t): return "HARD"
     return "SOFT" if "once per turn" in t else "NONE"
 import collections

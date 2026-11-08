@@ -23,11 +23,12 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
   sizes (Main 40–60, Extra and Side up to 15), the 3-copy limit and the TCG or OCG banlist. Decks are
   saved on the phone (mydecks.json) after every change. Deck lists show as a grid of card pictures
   (one per copy) by default; the button at the top switches to the list view.
-- **Analysis** (test): rates the cards in one of your decks. Each card gets roles (starter, extender,
-  hand trap, interruption, board breaker, floodgate/ender, brick), guessed from its text and editable per
-  deck. The app draws 20,000 opening hands going first (5 cards) and going second (6 cards), scores each
-  hand, and gives every card a 0–100 score: how much better hands with it are than hands without it
-  (50 = neutral). Cards that name other cards get "Works with …" or "Needs …" notes. Logic in `analysis/`.
+- **Analysis** (test): for one of your decks, each Main Deck card gets roles (Starter, Searcher, Extender,
+  Hand trap, Endboard, Board breaker, Brick), guessed from its text and editable per deck, and its
+  once-per-turn rule (hard, soft or none) read from the text. The app shows the exact odds
+  (hypergeometric) of opening 1–5 playable cards and 1–5 hand traps, for 5 cards going first or 6 going
+  second. A second column counts several copies of the same hard once-per-turn card as one. Logic in
+  `analysis/`.
 - **Archetype search**: pick one or more archetypes, a format (TCG / OCG) and a time span:
   - *Recent*: last 2 weeks, or since the last banlist if that came out less than 2 weeks ago
   - *This banlist*: since the last Forbidden & Limited list

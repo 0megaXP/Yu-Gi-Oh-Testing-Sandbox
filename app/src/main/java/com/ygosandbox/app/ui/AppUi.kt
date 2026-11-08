@@ -135,7 +135,7 @@ private fun MainMenu(ui: UiState, vm: AppViewModel) {
         ) { vm.open(Screen.Decks) }
         MenuTile(
             Icons.Default.Insights, "Analysis",
-            "Rate the cards in your decks, going first and going second",
+            "Card roles and opening-hand odds for your decks",
             badge = { TestBadge() },
         ) { vm.open(Screen.Analysis) }
         MenuTile(

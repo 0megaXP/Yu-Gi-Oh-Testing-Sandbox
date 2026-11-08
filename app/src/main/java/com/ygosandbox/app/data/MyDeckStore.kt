@@ -60,7 +60,7 @@ class MyDeckStore(context: Context) {
             r.keys().asSequence().mapNotNull { k ->
                 val id = k.toLongOrNull() ?: return@mapNotNull null
                 val a = r.getJSONArray(k)
-                id to (0 until a.length()).mapNotNull { runCatching { Role.valueOf(a.getString(it)) }.getOrNull() }.toSet()
+                id to (0 until a.length()).mapNotNull { Role.parse(a.getString(it)) }.toSet()
             }.toMap()
         } ?: emptyMap(),
     )

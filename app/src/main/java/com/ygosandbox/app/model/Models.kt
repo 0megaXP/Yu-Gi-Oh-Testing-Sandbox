@@ -160,12 +160,27 @@ data class SavedDeck(
 /** What a card does for a deck, used by the Analysis feature. A card can have several. */
 enum class Role(val label: String, val short: String) {
     STARTER("Starter", "Starts a combo on its own"),
+    SEARCHER("Searcher", "Adds a card from the Deck to the hand"),
     EXTENDER("Extender", "Adds to a combo, needs a starter"),
     HAND_TRAP("Hand trap", "Disrupts the opponent from the hand"),
-    INTERRUPTION("Interruption", "Negates or removes from the field"),
+    ENDBOARD("Endboard", "Stays on the field after your combo: floodgates, set traps"),
     BREAKER("Board breaker", "Clears the opponent's board going second"),
-    ENDER("Floodgate / ender", "Locks or protects after your combo"),
-    BRICK("Brick", "Bad to draw"),
+    BRICK("Brick", "Bad to draw");
+
+    companion object {
+        /** Reads saved names, including ones from older versions. */
+        fun parse(name: String): Role? = when (name) {
+            "ENDER", "INTERRUPTION" -> ENDBOARD
+            else -> entries.firstOrNull { it.name == name }
+        }
+    }
+}
+
+/** How often a card's effects can be used. */
+enum class Opt(val label: String, val short: String) {
+    HARD("Hard once per turn", "Hard OPT"),
+    SOFT("Soft once per turn", "Soft OPT"),
+    NONE("No once per turn", "No OPT"),
 }
 
 /** Highest number of copies the banlist allows. */

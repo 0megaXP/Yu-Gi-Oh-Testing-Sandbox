@@ -1,13 +1,31 @@
 package com.ygosandbox.app.analysis
 
 import com.ygosandbox.app.model.Card
+import com.ygosandbox.app.model.Opt
 import com.ygosandbox.app.model.Role
 
 /**
- * Guesses a card's roles from its text. These are rough rules and the player is expected to
- * correct them per deck — a card's real role depends on the deck it's in.
+ * Guesses a card's roles and once-per-turn rule from its text. The roles are rough and the
+ * player is expected to correct them per deck — a card's real role depends on the deck it's in.
  */
 object RoleGuesser {
+
+    /**
+     * Hard once per turn: "You can only use this effect of "X" once per turn", "You can only
+     * activate 1 "X" per turn" — limited by card name, so extra copies can't use it again.
+     * Soft once per turn: "Once per turn" without that — each copy can use it.
+     */
+    fun opt(card: Card): Opt {
+        val t = card.desc.lowercase()
+        val hard = Regex("you can only (use|activate|special summon|normal summon|apply)[^.]*(once per turn|per turn)").containsMatchIn(t) ||
+            Regex("you can only use (each|1|one)[^.]*per turn").containsMatchIn(t)
+        return when {
+            hard -> Opt.HARD
+            "once per turn" in t -> Opt.SOFT
+            else -> Opt.NONE
+        }
+    }
+
     fun guess(card: Card): Set<Role> {
         if (card.isExtraDeck) return emptySet()
         val t = card.desc.lowercase()
@@ -15,7 +33,6 @@ object RoleGuesser {
         val isSpell = card.type.contains("Spell")
         val isTrap = card.type.contains("Trap")
         val continuous = card.race == "Continuous"
-        val quickPlay = card.race == "Quick-Play"
 
         val fromHandSelf = "discard this card" in t || "send this card from your hand" in t ||
             "reveal this card in your hand" in t || "banish this card from your hand" in t
@@ -35,28 +52,26 @@ object RoleGuesser {
         ).any { it in t } && ("destroy" in t || "banish" in t || "negate" in t || "shuffle" in t || "return" in t || "tribute" in t)
         if ((breaker && !continuous) || ("take control of" in t && !continuous)) roles += Role.BREAKER
 
-        // Interruptions (negates or removal you hold up)
+        // Endboard: floodgates, continuous locks, set traps that negate or remove
         val removes = "negate" in t || "destroy" in t || "banish" in t || "return it to the hand" in t
-        if ((isTrap && !continuous && removes) || (quickPlay && "negate" in t)) roles += Role.INTERRUPTION
-
-        // Floodgates and enders
         if ((continuous && ("cannot" in t || "neither player" in t || "negate" in t || "can only control" in t)) ||
-            (card.isMonster && ("your opponent cannot" in t || "neither player can" in t) && !fromHandSelf)
-        ) roles += Role.ENDER
+            (card.isMonster && ("your opponent cannot" in t || "neither player can" in t) && !fromHandSelf) ||
+            (isTrap && !continuous && removes && !trapFromHand)
+        ) roles += Role.ENDBOARD
 
-        if (roles.isEmpty()) {
-            val searches = ("add 1" in t || "add up to" in t) && "from your deck" in t
+        if (Role.HAND_TRAP !in roles) {
+            val searches = ("add 1" in t || "add up to" in t || "add it to your hand" in t) && "from your deck" in t
             val summonsFromDeck = "special summon" in t && "from your deck" in t
             val fusionFromDeck = "fusion summon" in t && "deck" in t
             val normalSummonable = !card.isMonster || "cannot be normal summoned" !in t
             val selfSummon = "special summon this card" in t || "you can special summon this card" in t
 
-            when {
-                (searches || summonsFromDeck || fusionFromDeck) && normalSummonable && (card.isMonster || isSpell) ->
-                    roles += Role.STARTER
-                card.isMonster && selfSummon -> roles += Role.EXTENDER
-                card.isMonster && "cannot be normal summoned" in t -> roles += Role.BRICK
+            if (searches) roles += Role.SEARCHER
+            if ((summonsFromDeck || fusionFromDeck || (searches && card.isMonster)) && normalSummonable && (card.isMonster || isSpell)) {
+                roles += Role.STARTER
             }
+            if (Role.STARTER !in roles && card.isMonster && selfSummon) roles += Role.EXTENDER
+            if (roles.isEmpty() && card.isMonster && "cannot be normal summoned" in t) roles += Role.BRICK
         }
         return roles
     }

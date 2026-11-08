@@ -54,12 +54,11 @@ import coil.compose.AsyncImage
 import com.ygosandbox.app.AppViewModel
 import com.ygosandbox.app.Screen
 import com.ygosandbox.app.UiState
-import com.ygosandbox.app.analysis.AnalysisReport
-import com.ygosandbox.app.analysis.CardScore
-import com.ygosandbox.app.analysis.DeckAnalyzer
+import com.ygosandbox.app.analysis.CardInfo
+import com.ygosandbox.app.analysis.Odds
+import com.ygosandbox.app.analysis.OddsTable
 import com.ygosandbox.app.analysis.RoleGuesser
-import com.ygosandbox.app.analysis.Turn
-import com.ygosandbox.app.analysis.TurnStats
+import com.ygosandbox.app.model.Opt
 import com.ygosandbox.app.model.Role
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -74,7 +73,7 @@ fun TestBadge() {
         positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
         tooltip = {
             PlainTooltip {
-                Text("Test feature: scores are estimates from simulated opening hands and card roles. Results and rules may change.")
+                Text("Test feature: roles and once-per-turn are guessed from card text and may be wrong. The odds are exact for the roles shown.")
             }
         },
         state = state,
@@ -102,8 +101,8 @@ fun AnalysisScreen(ui: UiState, vm: AppViewModel) {
     Column(Modifier.fillMaxSize()) {
         Header("Analysis", onBack = { vm.back() }) { TestBadge(); Spacer(Modifier.width(12.dp)) }
         Text(
-            "Pick one of your decks. The app draws ${DeckAnalyzer.HANDS} opening hands going first and going second, " +
-                "and rates each card by how much it improves the hands it's in.",
+            "Pick one of your decks to see each card's role and once-per-turn rule, and the exact odds of " +
+                "opening playable cards and hand traps.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 16.dp),
@@ -142,6 +141,8 @@ fun AnalysisScreen(ui: UiState, vm: AppViewModel) {
 
 // ---------------- Report ----------------
 
+private enum class HandSize(val label: String, val cards: Int) { FIRST("Going first", 5), SECOND("Going second", 6) }
+
 @Composable
 fun AnalysisDeckScreen(ui: UiState, vm: AppViewModel, id: String) {
     val deck = ui.myDecks.firstOrNull { it.id == id }
@@ -149,64 +150,78 @@ fun AnalysisDeckScreen(ui: UiState, vm: AppViewModel, id: String) {
         Column { Header("Analysis", onBack = { vm.back() }) }
         return
     }
-    var turn by rememberSaveable { mutableStateOf(Turn.FIRST) }
-    var editing by remember { mutableStateOf<CardScore?>(null) }
+    var hand by rememberSaveable { mutableStateOf(HandSize.FIRST) }
+    val playableRoles = remember { mutableStateListOf(Role.STARTER, Role.SEARCHER) }
+    var editing by remember { mutableStateOf<CardInfo?>(null) }
     var pager by remember { mutableStateOf<Int?>(null) }
 
-    val report by produceState<AnalysisReport?>(null, deck.main, deck.extra, deck.roles, ui.dbRevision) {
-        value = withContext(Dispatchers.Default) { DeckAnalyzer.analyze(deck, vm.db) }
+    val cards = remember(deck.main, deck.roles, ui.dbRevision) { Odds.cards(deck, vm.db) }
+    val playable = remember(cards, playableRoles.toList(), hand) {
+        Odds.table(cards, playableRoles.toSet(), deck.main.size, hand.cards)
     }
-    val sorted = remember(report, turn) {
-        report?.cards.orEmpty().sortedWith(compareByDescending<CardScore> { it.score.getValue(turn) }.thenBy { it.card?.name ?: "" })
+    val handTraps = remember(cards, hand) { Odds.table(cards, setOf(Role.HAND_TRAP), deck.main.size, hand.cards) }
+    // Cards listed by their first role, in role order; cards without a role last.
+    val ordered = remember(cards) {
+        cards.sortedWith(
+            compareBy<CardInfo> { c -> c.roles.minOfOrNull { it.ordinal } ?: Role.entries.size }
+                .thenBy { it.card?.name ?: "" },
+        )
     }
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
             Header(deck.name, onBack = { vm.back() }) { TestBadge(); Spacer(Modifier.width(12.dp)) }
-            val r = report
-            if (r == null) {
-                Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                return@Column
-            }
             LazyColumn(contentPadding = PaddingValues(bottom = 32.dp)) {
                 item(key = "top") {
                     Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Turn.entries.forEach { t ->
-                                FilterChip(selected = turn == t, onClick = { turn = t }, label = { Text("${t.label} (${t.handSize})") })
+                            HandSize.entries.forEach { h ->
+                                FilterChip(selected = hand == h, onClick = { hand = h }, label = { Text("${h.label} (${h.cards})") })
                             }
                         }
-                        if (r.mainCount < 40) Text(
-                            "The Main Deck has ${r.mainCount} cards. Results are more meaningful with a full deck of 40+.",
+                        if (deck.main.size < 40) Text(
+                            "The Main Deck has ${deck.main.size} cards; a legal deck needs 40.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                         )
-                        if (r.hands > 0) StatsCard(r.stats.getValue(turn), turn)
+
+                        SectionTitle("Playable cards")
+                        Text("Count as playable:", style = MaterialTheme.typography.bodySmall)
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf(Role.STARTER, Role.SEARCHER, Role.EXTENDER).forEach { r ->
+                                FilterChip(
+                                    selected = r in playableRoles,
+                                    onClick = { if (r in playableRoles) playableRoles.remove(r) else playableRoles.add(r) },
+                                    label = { Text(r.label) },
+                                )
+                            }
+                        }
+                        OddsCard(playable, "playable", hand.cards)
+
+                        SectionTitle("Hand traps")
+                        OddsCard(handTraps, "hand trap", hand.cards)
+
                         Text(
-                            "Card scores: 50 is neutral, higher means hands with the card are better than hands without it. " +
-                                "Tap a card to set its roles; the guesses come from its text and are often wrong.",
+                            "Exact odds for a ${hand.cards}-card hand from ${deck.main.size} cards. " +
+                                "\"Hard OPT once\" counts 2+ copies of the same hard once-per-turn card as one, since only one can be used.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        SectionTitle("Cards")
+                        Text(
+                            "Roles are guessed from the card text; tap a card to change them. Once per turn is read from the text.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
-                items(sorted, key = { it.cardId }) { c ->
-                    ScoreRow(c, turn, onRoles = { editing = c }, onOpen = {
-                        pager = sorted.indexOf(c).coerceAtLeast(0)
-                    })
-                }
-                if (r.extraDeck.isNotEmpty()) item(key = "extra") {
-                    Text(
-                        "Extra Deck (${r.extraDeck.size} different cards) isn't drawn, so it isn't scored yet.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(16.dp),
-                    )
+                items(ordered, key = { it.cardId }) { c ->
+                    InfoRow(c, onRoles = { editing = c }, onOpen = { pager = ordered.indexOf(c).coerceAtLeast(0) })
                 }
             }
         }
         pager?.let { start ->
-            CardPager(sorted.map { PagerItem(it.cardId, it.card?.name ?: "Unknown card", it.card) }, start, deck.format, onClose = { pager = null })
+            CardPager(ordered.map { PagerItem(it.cardId, it.card?.name ?: "Unknown card", it.card) }, start, deck.format, onClose = { pager = null })
         }
     }
 
@@ -221,39 +236,51 @@ fun AnalysisDeckScreen(ui: UiState, vm: AppViewModel, id: String) {
 }
 
 @Composable
-private fun StatsCard(s: TurnStats, turn: Turn) {
+private fun OddsCard(t: OddsTable, what: String, handSize: Int) {
     Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = RoundedCornerShape(12.dp)) {
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Opening hands · ${turn.label.lowercase()}", fontWeight = FontWeight.SemiBold)
-            StatLine("Can start a combo", s.playable, "a starter, or 2 extenders")
-            StatLine("Strong start", s.strong, "2 starters, or starter + extender")
-            StatLine("Has interaction", s.interaction, "hand trap or interruption")
-            if (turn == Turn.SECOND) StatLine("Has a board breaker", s.breaker, null)
-            StatLine("Bricked", s.bricked, "2 or more bricks", bad = true)
-            StatLine("Average hand quality", s.quality, null)
+            Text(
+                "${t.cardsInDeck} $what card${if (t.cardsInDeck == 1) "" else "s"} in the deck",
+                fontWeight = FontWeight.SemiBold,
+            )
+            Row {
+                Text("In hand", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+                Text("Exactly", style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(64.dp))
+                Text("At least", style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(64.dp))
+                Text("Hard OPT once", style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(80.dp))
+            }
+            t.rows.filter { it.k <= handSize }.forEach { r ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("${r.k}", modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)
+                    Text(oddsPct(r.exactly), modifier = Modifier.width(64.dp))
+                    Text(oddsPct(r.atLeast), modifier = Modifier.width(64.dp), fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary)
+                    Text(oddsPct(r.atLeastUsable), modifier = Modifier.width(80.dp))
+                }
+                LinearProgressIndicator(
+                    progress = { r.atLeast.toFloat().coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
+                )
+            }
+            val none = 1.0 - (t.rows.firstOrNull()?.atLeast ?: 0.0)
+            Text(
+                "No $what card: ${oddsPct(none)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
 
-@Composable
-private fun StatLine(label: String, value: Float, hint: String?, bad: Boolean = false) {
-    Column {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-            Text(pct(value), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-        }
-        LinearProgressIndicator(
-            progress = { value.coerceIn(0f, 1f) },
-            color = if (bad) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-            modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
-        )
-        if (hint != null) Text(hint, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
+/** 0.4172 → "41.7%", tiny values → "<0.1%". */
+private fun oddsPct(p: Double): String = when {
+    p <= 0.0 -> "0%"
+    p < 0.001 -> "<0.1%"
+    else -> String.format(java.util.Locale.US, "%.1f%%", p * 100)
 }
 
 @Composable
-private fun ScoreRow(c: CardScore, turn: Turn, onRoles: () -> Unit, onOpen: () -> Unit) {
-    val score = c.score.getValue(turn)
+private fun InfoRow(c: CardInfo, onRoles: () -> Unit, onOpen: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onRoles).padding(horizontal = 16.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -277,35 +304,21 @@ private fun ScoreRow(c: CardScore, turn: Turn, onRoles: () -> Unit, onOpen: () -
                 style = MaterialTheme.typography.labelSmall,
                 color = if (c.rolesByHand) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            if (c.reasons.isNotEmpty()) Text(
-                c.reasons.joinToString(" · ") { it.replace(' ', ' ') },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 3, overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Spacer(Modifier.width(8.dp))
-        Column(horizontalAlignment = Alignment.End, modifier = Modifier.width(44.dp)) {
             Text(
-                "$score",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = when {
-                    score >= 60 -> MaterialTheme.colorScheme.primary
-                    score <= 40 -> MaterialTheme.colorScheme.error
-                    else -> MaterialTheme.colorScheme.onSurface
+                c.opt.label,
+                style = MaterialTheme.typography.labelSmall,
+                color = when (c.opt) {
+                    Opt.HARD -> MaterialTheme.colorScheme.tertiary
+                    Opt.SOFT -> MaterialTheme.colorScheme.secondary
+                    Opt.NONE -> MaterialTheme.colorScheme.onSurfaceVariant
                 },
-            )
-            LinearProgressIndicator(
-                progress = { score / 100f },
-                modifier = Modifier.fillMaxWidth().height(3.dp),
             )
         }
     }
 }
 
 @Composable
-private fun RoleDialog(c: CardScore, onDismiss: () -> Unit, onSave: (Set<Role>) -> Unit, onReset: () -> Unit) {
+private fun RoleDialog(c: CardInfo, onDismiss: () -> Unit, onSave: (Set<Role>) -> Unit, onReset: () -> Unit) {
     val chosen = remember { mutableStateListOf(*c.roles.toTypedArray()) }
     val guessed = remember(c) { c.card?.let(RoleGuesser::guess).orEmpty() }
     AlertDialog(
@@ -313,10 +326,7 @@ private fun RoleDialog(c: CardScore, onDismiss: () -> Unit, onSave: (Set<Role>) 
         title = { Text(c.card?.name ?: "Card roles") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    "What does this card do in this deck? Pick any that apply.",
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                Text("What does this card do in this deck? Pick any that apply.", style = MaterialTheme.typography.bodySmall)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Role.entries.forEach { r ->
                         FilterChip(
@@ -330,7 +340,8 @@ private fun RoleDialog(c: CardScore, onDismiss: () -> Unit, onSave: (Set<Role>) 
                     Text("${r.label}: ${r.short}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Text(
-                    "Automatic guess: " + (if (guessed.isEmpty()) "no role" else guessed.joinToString(", ") { it.label }),
+                    "Automatic guess: " + (if (guessed.isEmpty()) "no role" else guessed.joinToString(", ") { it.label }) +
+                        " · ${c.opt.label}",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }

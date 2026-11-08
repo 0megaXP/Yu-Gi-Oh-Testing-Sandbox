@@ -220,21 +220,37 @@ private fun CardSections(cards: List<CardStat>, vm: AppViewModel, dbRevision: In
     }
     val indexed = cards.withIndex().toList()
     val groups = indexed.groupBy { it.value.usage }
+    // Sections that are closed; all start open.
+    val closed = remember { androidx.compose.runtime.mutableStateListOf<Usage>() }
     LazyColumn(contentPadding = PaddingValues(bottom = 32.dp)) {
         Usage.entries.forEach { usage ->
             val rows = groups[usage].orEmpty()
             if (rows.isEmpty()) return@forEach
+            val isOpen = usage !in closed
             item(key = "h_${usage.name}") {
-                Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 6.dp)) {
-                    Text(
-                        "${usage.label} · ${rows.size}",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.primary,
+                Row(
+                    Modifier.fillMaxWidth()
+                        .clickable { if (isOpen) closed += usage else closed.remove(usage) }
+                        .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "${usage.label} · ${rows.size}",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Text(usage.help, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Icon(
+                        if (isOpen) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        if (isOpen) "Close" else "Open",
+                        tint = MaterialTheme.colorScheme.primary,
                     )
-                    Text(usage.help, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
+            if (!isOpen) return@forEach
             rows.groupBy { vm.db.find(it.value.cardId)?.group ?: CardGroup.UNKNOWN }.forEach { (group, typed) ->
                 item(key = "g_${usage.name}_${group.name}") {
                     Text(

@@ -9,6 +9,7 @@ import com.ygosandbox.app.model.Role
  * player is expected to correct them per deck — a card's real role depends on the deck it's in.
  */
 object RoleGuesser {
+    private val QUOTED_NAME = Regex("\"[^\"]*\"")
 
     /**
      * Hard once per turn: "You can only use this effect of "X" once per turn", "You can only
@@ -16,7 +17,8 @@ object RoleGuesser {
      * Soft once per turn: "Once per turn" without that — each copy can use it.
      */
     fun opt(card: Card): Opt {
-        val t = card.desc.lowercase()
+        // Blank out quoted names first, so dots in names like "A.I." don't end the sentence early.
+        val t = QUOTED_NAME.replace(card.desc.lowercase(), "\"n\"")
         val hard = Regex("you can only (use|activate|special summon|normal summon|apply)[^.]*(once per turn|per turn)").containsMatchIn(t) ||
             Regex("you can only use (each|1|one)[^.]*per turn").containsMatchIn(t)
         return when {

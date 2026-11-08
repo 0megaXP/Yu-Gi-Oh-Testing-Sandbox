@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
 package com.ygosandbox.app.ui
 
 import androidx.compose.foundation.background
@@ -19,6 +21,16 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import com.ygosandbox.app.model.GameFormat
+import com.ygosandbox.app.model.TimeSpan
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -82,6 +94,7 @@ fun DeckDetailScreen(ui: UiState, vm: AppViewModel, id: String) {
             }
             ui.searching?.let { SearchProgress(it, onCancel = { vm.cancelSearch() }) }
             Summary(deck)
+            EditSearchPanel(deck, ui, vm)
             TabRow(selectedTabIndex = tab) {
                 Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Engine (${engine.size})") })
                 Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Non-engine (${nonEngine.size})") })
@@ -106,6 +119,71 @@ fun DeckDetailScreen(ui: UiState, vm: AppViewModel, id: String) {
         confirmButton = { TextButton(onClick = { confirmDelete = false; vm.deleteDeck(deck.id) }) { Text("Delete") } },
         dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
     )
+}
+
+/** Openable panel to change the archetypes (and format/time span) and run the search again. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun EditSearchPanel(deck: DeckAnalysis, ui: UiState, vm: AppViewModel) {
+    var open by rememberSaveable(deck.id) { mutableStateOf(false) }
+    val wanted = remember(deck.id) { androidx.compose.runtime.mutableStateListOf(*deck.archetypes.toTypedArray()) }
+    val ignored = remember(deck.id) { androidx.compose.runtime.mutableStateListOf(*deck.excluded.toTypedArray()) }
+    var format by remember(deck.id) { mutableStateOf(deck.format) }
+    var span by remember(deck.id) { mutableStateOf(deck.span) }
+
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+    ) {
+        Column {
+            Row(
+                Modifier.fillMaxWidth().clickable { open = !open }.padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Default.Tune, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(10.dp))
+                Text("Edit search", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Icon(if (open) Icons.Default.ExpandLess else Icons.Default.ExpandMore, if (open) "Close" else "Open")
+            }
+            if (open) Column(
+                Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())
+                    .padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                SectionTitle("Archetypes")
+                ArchetypePicker(
+                    help = "Decks must play all of these.",
+                    field = "Add an archetype",
+                    tags = wanted, taken = ignored, all = ui.archetypes,
+                )
+                SectionTitle("Ignore")
+                ArchetypePicker(
+                    help = "Skip decks that play any of these.",
+                    field = "Archetype to ignore",
+                    tags = ignored, taken = wanted, all = ui.archetypes,
+                )
+                SectionTitle("Format and time span")
+                androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    GameFormat.entries.forEach { f ->
+                        FilterChip(selected = format == f, onClick = { format = f }, label = { Text(f.label) })
+                    }
+                    TimeSpan.entries.forEach { t ->
+                        FilterChip(selected = span == t, onClick = { span = t }, label = { Text(t.label) })
+                    }
+                }
+                Button(
+                    onClick = {
+                        vm.startSearch(wanted.toList(), ignored.toList(), format, span, replaceId = deck.id)
+                    },
+                    enabled = wanted.isNotEmpty() && ui.searching == null,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Search again with these") }
+            }
+        }
+    }
 }
 
 /** Main, Side, Mix, Niche; inside each by card type (Monster, Spell, Trap, Fusion…), then most played. */

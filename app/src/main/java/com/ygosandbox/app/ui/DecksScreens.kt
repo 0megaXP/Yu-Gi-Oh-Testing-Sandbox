@@ -240,7 +240,7 @@ fun NewSearchScreen(ui: UiState, vm: AppViewModel) {
 
 /** Tag input with suggestions from the archetype list. [taken] are tags used by the other list. */
 @Composable
-private fun ArchetypePicker(
+fun ArchetypePicker(
     help: String,
     field: String,
     tags: androidx.compose.runtime.snapshots.SnapshotStateList<String>,

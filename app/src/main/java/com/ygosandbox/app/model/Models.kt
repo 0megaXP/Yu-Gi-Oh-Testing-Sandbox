@@ -138,6 +138,8 @@ data class SavedDeck(
     val side: List<Long>,
     val createdAt: Long,
     val updatedAt: Long,
+    /** Roles set by hand for the Analysis feature; cards not listed use the automatic guess. */
+    val roles: Map<Long, Set<Role>> = emptyMap(),
 ) {
     fun part(p: DeckPart): List<Long> = when (p) {
         DeckPart.MAIN -> main
@@ -153,6 +155,17 @@ data class SavedDeck(
 
     /** Copies of a card across Main, Extra and Side. */
     fun copiesOf(id: Long): Int = main.count { it == id } + extra.count { it == id } + side.count { it == id }
+}
+
+/** What a card does for a deck, used by the Analysis feature. A card can have several. */
+enum class Role(val label: String, val short: String) {
+    STARTER("Starter", "Starts a combo on its own"),
+    EXTENDER("Extender", "Adds to a combo, needs a starter"),
+    HAND_TRAP("Hand trap", "Disrupts the opponent from the hand"),
+    INTERRUPTION("Interruption", "Negates or removes from the field"),
+    BREAKER("Board breaker", "Clears the opponent's board going second"),
+    ENDER("Floodgate / ender", "Locks or protects after your combo"),
+    BRICK("Brick", "Bad to draw"),
 }
 
 /** Highest number of copies the banlist allows. */

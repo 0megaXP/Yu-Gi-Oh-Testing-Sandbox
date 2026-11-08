@@ -32,6 +32,8 @@ sealed interface Screen {
     data object Cards : Screen
     data object MyDecks : Screen
     data class DeckEditor(val id: String) : Screen
+    data object Analysis : Screen
+    data class AnalysisDeck(val id: String) : Screen
     data object Settings : Screen
 }
 
@@ -254,6 +256,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val clean = name.trim()
         if (clean.isEmpty()) return
         changeDeck(id) { it.copy(name = clean) }
+    }
+
+    /** Sets a card's roles for the Analysis feature; null goes back to the automatic guess. */
+    fun setRoles(deckId: String, cardId: Long, roles: Set<com.ygosandbox.app.model.Role>?) = changeDeck(deckId) { d ->
+        d.copy(roles = if (roles == null) d.roles - cardId else d.roles + (cardId to roles))
     }
 
     fun setDeckFormat(id: String, format: GameFormat) = changeDeck(id) { it.copy(format = format) }

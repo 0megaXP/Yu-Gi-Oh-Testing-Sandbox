@@ -2,6 +2,7 @@ package com.ygosandbox.app.data
 
 import android.content.Context
 import com.ygosandbox.app.model.GameFormat
+import com.ygosandbox.app.model.Role
 import com.ygosandbox.app.model.SavedDeck
 import org.json.JSONArray
 import org.json.JSONObject
@@ -38,6 +39,9 @@ class MyDeckStore(context: Context) {
         put("side", JSONArray(d.side))
         put("created", d.createdAt)
         put("updated", d.updatedAt)
+        put("roles", JSONObject().apply {
+            d.roles.forEach { (id, r) -> put(id.toString(), JSONArray(r.map { it.name })) }
+        })
     }
 
     private fun ids(a: JSONArray?): List<Long> =
@@ -52,5 +56,12 @@ class MyDeckStore(context: Context) {
         side = ids(o.optJSONArray("side")),
         createdAt = o.optLong("created"),
         updatedAt = o.optLong("updated"),
+        roles = o.optJSONObject("roles")?.let { r ->
+            r.keys().asSequence().mapNotNull { k ->
+                val id = k.toLongOrNull() ?: return@mapNotNull null
+                val a = r.getJSONArray(k)
+                id to (0 until a.length()).mapNotNull { runCatching { Role.valueOf(a.getString(it)) }.getOrNull() }.toSet()
+            }.toMap()
+        } ?: emptyMap(),
     )
 }

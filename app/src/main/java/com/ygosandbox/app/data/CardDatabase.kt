@@ -96,6 +96,10 @@ class CardDatabase(private val context: Context) {
 
     fun isInArchetype(card: Card, archetype: String): Boolean = card.id in membersOf(archetype)
 
+    /** Other cards this card names in its text, e.g. "Fallen of Albaz" for Ecclesia. */
+    fun namedCards(card: Card): List<Card> =
+        quotes[card.id].orEmpty().mapNotNull { n -> byName[n]?.let { byId[it] } }.filter { it.id != card.id }
+
     /** Loads the copy saved on the phone. Returns false if there is none yet. */
     suspend fun loadLocal(): Boolean = withContext(Dispatchers.IO) {
         if (!isDownloaded) return@withContext false

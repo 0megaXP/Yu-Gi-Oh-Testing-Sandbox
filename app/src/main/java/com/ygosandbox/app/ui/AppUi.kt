@@ -19,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Style
@@ -78,6 +79,8 @@ fun SandboxApp(vm: AppViewModel) {
                     Screen.Cards -> CardsScreen(ui, vm)
                     Screen.MyDecks -> MyDecksScreen(ui, vm)
                     is Screen.DeckEditor -> DeckEditorScreen(ui, vm, s.id)
+                    Screen.Analysis -> AnalysisScreen(ui, vm)
+                    is Screen.AnalysisDeck -> AnalysisDeckScreen(ui, vm, s.id)
                     Screen.Settings -> SettingsScreen(ui, vm)
                 }
             }
@@ -131,6 +134,11 @@ private fun MainMenu(ui: UiState, vm: AppViewModel) {
             else "${ui.decks.size} saved · search a new archetype",
         ) { vm.open(Screen.Decks) }
         MenuTile(
+            Icons.Default.Insights, "Analysis",
+            "Rate the cards in your decks, going first and going second",
+            badge = { TestBadge() },
+        ) { vm.open(Screen.Analysis) }
+        MenuTile(
             Icons.Default.Style, "Card database",
             if (ui.cardCount > 0) "Browse ${ui.cardCount} cards and archetypes" else "Available once downloaded",
         ) { vm.open(Screen.Cards) }
@@ -170,7 +178,13 @@ private fun DbStatusLine(ui: UiState, vm: AppViewModel) {
 }
 
 @Composable
-private fun MenuTile(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
+private fun MenuTile(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    badge: (@Composable () -> Unit)? = null,
+    onClick: () -> Unit,
+) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         shape = RoundedCornerShape(16.dp),
@@ -188,7 +202,10 @@ private fun MenuTile(icon: ImageVector, title: String, subtitle: String, onClick
             }
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    if (badge != null) { Spacer(Modifier.width(8.dp)); badge() }
+                }
                 Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Icon(Icons.AutoMirrored.Filled.ArrowForward, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)

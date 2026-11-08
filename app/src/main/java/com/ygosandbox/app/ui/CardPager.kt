@@ -48,7 +48,13 @@ data class PagerItem(val cardId: Long, val name: String, val card: Card?, val st
 
 /** Full-screen card details, with arrow buttons for the previous and next card. */
 @Composable
-fun CardPager(items: List<PagerItem>, start: Int, format: GameFormat, onClose: () -> Unit) {
+fun CardPager(
+    items: List<PagerItem>,
+    start: Int,
+    format: GameFormat,
+    onClose: () -> Unit,
+    actions: (@Composable (PagerItem) -> Unit)? = null,
+) {
     BackHandler(onBack = onClose)
     // Opening a card from a search box: put the keyboard away.
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
@@ -82,6 +88,7 @@ fun CardPager(items: List<PagerItem>, start: Int, format: GameFormat, onClose: (
                     onNext = if (page < items.size - 1) ({ scope.launch { pager.animateScrollToPage(page + 1) } }) else null,
                 )
             }
+            if (actions != null && items.isNotEmpty()) actions(items[pager.currentPage.coerceIn(0, items.size - 1)])
         }
     }
 }

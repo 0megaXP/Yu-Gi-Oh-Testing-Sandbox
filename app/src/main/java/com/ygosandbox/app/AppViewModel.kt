@@ -51,6 +51,8 @@ data class UiState(
     val myDecks: List<SavedDeck> = emptyList(),
     /** Progress text while a deck search runs, otherwise null. */
     val searching: String? = null,
+    /** Show deck lists as a grid of card pictures. */
+    val deckGrid: Boolean = true,
     val message: String? = null,
     val update: UpdateInfo? = null,
     val updateProgress: Float? = null,
@@ -75,6 +77,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val ui: StateFlow<UiState> = _ui.asStateFlow()
 
     init {
+        _ui.update { it.copy(deckGrid = settings.deckGrid) }
         checkForUpdates(manual = false)
         viewModelScope.launch { openCardDatabase() }
     }
@@ -378,6 +381,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { it.copy(updateProgress = null) }
             }
         }
+    }
+
+    fun setDeckGrid(grid: Boolean) {
+        settings.deckGrid = grid
+        _ui.update { it.copy(deckGrid = grid) }
     }
 
     fun showMessage(text: String) = _ui.update { it.copy(message = text) }

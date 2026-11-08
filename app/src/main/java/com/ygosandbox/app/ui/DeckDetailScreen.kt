@@ -112,7 +112,7 @@ fun DeckDetailScreen(ui: UiState, vm: AppViewModel, id: String) {
             }
             CardPager(items, start, deck.format, onClose = { pagerStart = null })
         }
-        viewing?.let { d -> SourceDeckViewer(d, deck.format, vm, ui.dbRevision, onClose = { viewing = null }) }
+        viewing?.let { d -> SourceDeckViewer(d, deck.format, vm, ui.dbRevision, ui.deckGrid, onClose = { viewing = null }) }
     }
 
     if (confirmDelete) AlertDialog(

@@ -54,7 +54,7 @@ private data class ListEntry(val id: Long, val card: Card?, val copies: Int)
 
 /** A downloaded tournament deck list, with Import to My decks. */
 @Composable
-fun SourceDeckViewer(d: SourceDeck, format: GameFormat, vm: AppViewModel, dbRevision: Int, onClose: () -> Unit) {
+fun SourceDeckViewer(d: SourceDeck, format: GameFormat, vm: AppViewModel, dbRevision: Int, grid: Boolean, onClose: () -> Unit) {
     BackHandler(onBack = onClose)
     val uri = LocalUriHandler.current
     var pager by remember { mutableStateOf<Int?>(null) }
@@ -78,6 +78,7 @@ fun SourceDeckViewer(d: SourceDeck, format: GameFormat, vm: AppViewModel, dbRevi
             Row(Modifier.fillMaxWidth().padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onClose) { Icon(Icons.Default.Close, "Close") }
                 Text(d.name, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                GridToggle(grid, vm::setDeckGrid)
             }
             LazyColumn(contentPadding = PaddingValues(bottom = 32.dp)) {
                 item(key = "info") {
@@ -124,6 +125,12 @@ fun SourceDeckViewer(d: SourceDeck, format: GameFormat, vm: AppViewModel, dbRevi
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp),
                         )
+                    }
+                    if (grid) {
+                        cardGrid("grid_$label", entries.flatMap { e -> List(e.copies) { e.id to e.card } }) { id ->
+                            pager = pagerItems.indexOfFirst { it.cardId == id }.coerceAtLeast(0)
+                        }
+                        return@forEach
                     }
                     entries.groupBy { it.card?.group ?: CardGroup.UNKNOWN }.forEach { (group, rows) ->
                         item(key = "g_${label}_${group.name}") {

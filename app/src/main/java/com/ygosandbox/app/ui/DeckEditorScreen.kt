@@ -98,6 +98,7 @@ fun DeckEditorScreen(ui: UiState, vm: AppViewModel, id: String) {
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
             Header(deck.name, onBack = { vm.back() }) {
+                GridToggle(ui.deckGrid, vm::setDeckGrid)
                 IconButton(onClick = { renaming = true }) { Icon(Icons.Default.Edit, "Rename") }
                 IconButton(onClick = { deleting = true }) { Icon(Icons.Default.Delete, "Delete") }
             }
@@ -156,6 +157,10 @@ fun DeckEditorScreen(ui: UiState, vm: AppViewModel, id: String) {
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                         )
                     }
+                    if (ui.deckGrid) {
+                        cardGrid("grid_${part.name}", list.flatMap { e -> List(e.copies) { e.cardId to e.card } }) { showCard(it) }
+                        return@forEach
+                    }
                     list.groupBy { it.card?.group ?: CardGroup.UNKNOWN }.forEach { (group, rows) ->
                         item(key = "g_${part.name}_${group.name}") {
                             Text(
@@ -188,7 +193,11 @@ fun DeckEditorScreen(ui: UiState, vm: AppViewModel, id: String) {
         )
 
         if (adding) AddCardsPanel(ui, vm, deck, onClose = { adding = false }, onShow = { items, i -> pager = items to i })
-        pager?.let { (items, start) -> CardPager(items, start, deck.format, onClose = { pager = null }) }
+        pager?.let { (items, start) ->
+            CardPager(items, start, deck.format, onClose = { pager = null }) { item ->
+                EditActions(deck, item.cardId, vm)
+            }
+        }
     }
 
     if (renaming) NameDialog(
@@ -268,6 +277,38 @@ private fun DeckCardRow(
         IconButton(onClick = onAdd) { Icon(Icons.Default.Add, "Add one") }
         IconButton(onClick = onMove) {
             Icon(Icons.Default.SwapVert, if (part == DeckPart.SIDE) "Move to Main/Extra" else "Move to Side")
+        }
+    }
+}
+
+/** Add / remove / move buttons under a card in the card viewer. */
+@Composable
+private fun EditActions(deck: SavedDeck, cardId: Long, vm: AppViewModel) {
+    val inMain = deck.main.count { it == cardId } + deck.extra.count { it == cardId }
+    val inSide = deck.side.count { it == cardId }
+    val mainPart = if (deck.extra.contains(cardId) || vm.db.find(cardId)?.isExtraDeck == true) DeckPart.EXTRA else DeckPart.MAIN
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            "In this deck: ${if (mainPart == DeckPart.EXTRA) "Extra" else "Main"} ×$inMain · Side ×$inSide",
+            style = MaterialTheme.typography.labelLarge,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            androidx.compose.material3.OutlinedButton(
+                onClick = { vm.removeCard(deck.id, cardId, mainPart) }, enabled = inMain > 0,
+                contentPadding = PaddingValues(horizontal = 10.dp),
+            ) { Text("− ${if (mainPart == DeckPart.EXTRA) "Extra" else "Main"}") }
+            Button(
+                onClick = { vm.addCard(deck.id, cardId, toSide = false)?.let(vm::showMessage) },
+                contentPadding = PaddingValues(horizontal = 10.dp),
+            ) { Text("+ ${if (mainPart == DeckPart.EXTRA) "Extra" else "Main"}") }
+            androidx.compose.material3.OutlinedButton(
+                onClick = { vm.removeCard(deck.id, cardId, DeckPart.SIDE) }, enabled = inSide > 0,
+                contentPadding = PaddingValues(horizontal = 10.dp),
+            ) { Text("− Side") }
+            FilledTonalButton(
+                onClick = { vm.addCard(deck.id, cardId, toSide = true)?.let(vm::showMessage) },
+                contentPadding = PaddingValues(horizontal = 10.dp),
+            ) { Text("+ Side") }
         }
     }
 }

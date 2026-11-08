@@ -21,7 +21,8 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
   Extra Deck monsters go to the Extra Deck automatically, and a Side button adds to the Side Deck.
   Each card has −/+ and a button to move a copy between Main/Extra and Side. The editor checks deck
   sizes (Main 40–60, Extra and Side up to 15), the 3-copy limit and the TCG or OCG banlist. Decks are
-  saved on the phone (mydecks.json) after every change.
+  saved on the phone (mydecks.json) after every change. Deck lists show as a grid of card pictures
+  (one per copy) by default; the button at the top switches to the list view.
 - **Archetype search**: pick one or more archetypes, a format (TCG / OCG) and a time span:
   - *Recent*: last 2 weeks, or since the last banlist if that came out less than 2 weeks ago
   - *This banlist*: since the last Forbidden & Limited list

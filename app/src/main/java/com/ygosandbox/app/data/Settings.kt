@@ -11,6 +11,11 @@ class Settings(context: Context) {
         get() = prefs.getString("github_token", "") ?: ""
         set(v) = prefs.edit().putString("github_token", v.trim()).apply()
 
+    /** Deck lists as a grid of card pictures (default) or as a list with copy counts. */
+    var deckGrid: Boolean
+        get() = prefs.getBoolean("deck_grid", true)
+        set(v) = prefs.edit().putBoolean("deck_grid", v).apply()
+
     var cardDbVersion: String
         get() = prefs.getString("card_db_version", "") ?: ""
         set(v) = prefs.edit().putString("card_db_version", v).apply()

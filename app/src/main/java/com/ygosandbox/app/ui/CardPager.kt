@@ -177,10 +177,12 @@ fun copies(f: Float) = if (f == 0f) "" else "×" + String.format(java.util.Local
 /** "In 82% of decks · Main 80% ×2.7 · Side 30% ×1.0 · Both 25%" */
 fun statLine(s: CardStat): String = buildList {
     add("In ${pct(s.anyRate)} of decks")
-    if (s.mainRate > 0) add("${if (s.extraDeck) "Extra" else "Main"} ${pct(s.mainRate)} ${copies(s.avgMain)}")
-    if (s.sideRate > 0) add("Side ${pct(s.sideRate)} ${copies(s.avgSide)}")
+    if (s.mainRate > 0) add("${if (s.extraDeck) "Extra" else "Main"} ${pct(s.mainRate)} ${copies(s.avgMain)}".trim())
+    if (s.sideRate > 0) add("Side ${pct(s.sideRate)} ${copies(s.avgSide)}".trim())
     if (s.bothRate > 0) add("Both ${pct(s.bothRate)}")
-}.joinToString(" · ")
+}
+    // Keep each value together, so a long line only wraps between values.
+    .joinToString(" · ") { it.replace(' ', '\u00A0') }
 
 fun typeLine(c: Card): String =
     if (c.isMonster) "${c.race} / ${c.type.replace(" Monster", "")}"

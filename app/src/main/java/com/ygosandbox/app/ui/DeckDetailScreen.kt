@@ -278,7 +278,7 @@ private fun CardRow(s: CardStat, vm: AppViewModel, dbRevision: Int, onClick: () 
                 statLine(s),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                maxLines = 3, overflow = TextOverflow.Ellipsis,
             )
         }
         Spacer(Modifier.width(8.dp))

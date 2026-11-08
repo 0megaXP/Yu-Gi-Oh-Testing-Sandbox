@@ -27,6 +27,58 @@ class CardDatabase(private val context: Context) {
 
     fun find(id: Long): Card? = byId[id]
 
+    // ---------- Archetypes ----------
+
+    /** Quoted text in card effects (lowercase) → ids of the cards whose text quotes it. */
+    @Volatile private var citedBy: Map<String, List<Long>> = emptyMap()
+    /** Card id → names (lowercase) its text quotes. */
+    @Volatile private var quotes: Map<Long, Set<String>> = emptyMap()
+    /** Card name (lowercase) → card id. */
+    @Volatile private var byName: Map<String, Long> = emptyMap()
+    private val memberCache = HashMap<String, Set<Long>>()
+
+    /**
+     * Which cards belong to an archetype:
+     * 1. YGOPRODeck tags the card with the archetype, or the archetype is a whole word in its name,
+     *    or its text cites the archetype in quotes (add 1 "Branded" card);
+     * 2. a card named in the text of at least [CITED_BY_MIN] cards from step 1 — e.g. many Branded
+     *    cards name "Fallen of Albaz", so Albaz is Branded;
+     * 3. a card whose text names a card from step 1 or 2 — e.g. Ecclesia names "Fallen of Albaz",
+     *    so Ecclesia is Branded too.
+     */
+    fun membersOf(archetype: String): Set<Long> {
+        val key = archetype.trim().lowercase()
+        if (key.isEmpty()) return emptySet()
+        synchronized(memberCache) { memberCache[key]?.let { return it } }
+        val cited = citedBy
+        val q = quotes
+        val names = byName
+
+        // 1. direct members
+        val base = HashSet<Long>()
+        cards.forEach { if (isDirectMember(it, archetype)) base += it.id }
+        cited[key]?.let { base += it }
+
+        // 2. cards the archetype keeps naming
+        val counts = HashMap<Long, Int>()
+        for (id in base) {
+            q[id].orEmpty().forEach { n -> names[n]?.let { counts[it] = (counts[it] ?: 0) + 1 } }
+        }
+        val core = HashSet(base)
+        counts.forEach { (id, n) -> if (n >= CITED_BY_MIN) core += id }
+
+        // 3. cards that name a member
+        val all = HashSet(core)
+        for (id in core) {
+            val name = byId[id]?.name?.lowercase() ?: continue
+            cited[name]?.let { all += it }
+        }
+        synchronized(memberCache) { memberCache[key] = all }
+        return all
+    }
+
+    fun isInArchetype(card: Card, archetype: String): Boolean = card.id in membersOf(archetype)
+
     /** Loads the copy saved on the phone. Returns false if there is none yet. */
     suspend fun loadLocal(): Boolean = withContext(Dispatchers.IO) {
         if (!isDownloaded) return@withContext false
@@ -98,8 +150,21 @@ class CardDatabase(private val context: Context) {
     private fun setCards(list: List<Card>) {
         val map = HashMap<Long, Card>(list.size * 2)
         list.forEach { c -> c.altIds.forEach { map[it] = c }; map[c.id] = c }
+        val cites = HashMap<String, MutableList<Long>>()
+        val quoted = HashMap<Long, Set<String>>(list.size * 2)
+        list.forEach { c ->
+            val own = QUOTED.findAll(c.desc).map { it.groupValues[1].ifEmpty { it.groupValues[2] }.trim().lowercase() }
+                .filter { it.isNotEmpty() && it != c.name.lowercase() }
+                .toSet()
+            if (own.isNotEmpty()) quoted[c.id] = own
+            own.forEach { cites.getOrPut(it) { ArrayList() } += c.id }
+        }
         cards = list.sortedBy { it.name.lowercase() }
         byId = map
+        citedBy = cites
+        quotes = quoted
+        byName = list.associate { it.name.lowercase() to it.id }
+        synchronized(memberCache) { memberCache.clear() }
     }
 
     private fun archetypesFromCards(list: List<Card>) =
@@ -232,29 +297,18 @@ class CardDatabase(private val context: Context) {
     companion object {
         const val API = "https://db.ygoprodeck.com/api/v7"
 
-        /**
-         * A card belongs to an archetype when YGOPRODeck tags it with that archetype, or when the
-         * archetype's name appears as a whole word in the card's name (that's how the game itself
-         * defines archetypes, and it catches cards YGOPRODeck lists under another archetype), or when
-         * the card's text cites the archetype in quotes, e.g. Add 1 "Branded" card.
-         */
-        fun isInArchetype(card: Card, archetype: String): Boolean {
-            if (card.archetype.equals(archetype, ignoreCase = true)) return true
-            if (nameContains(card.name, archetype)) return true
-            return citesInText(card.desc, archetype)
-        }
+        /** A card named by at least this many archetype cards becomes part of the archetype. */
+        const val CITED_BY_MIN = 2
+
+        /** Quoted names in card text: "Branded" or “Branded”. */
+        private val QUOTED = Regex("\"([^\"\\n]{1,80})\"|\u201C([^\u201D\\n]{1,80})\u201D")
 
         /**
-         * True when [text] mentions the archetype exactly as a quoted name ("Branded", “Branded”).
-         * Only exact quotes count, so "Dark Magician" doesn't make a card part of "Magician".
+         * Tagged by YGOPRODeck with the archetype, or the archetype's name appears as a whole word
+         * in the card's name (that's how the game itself defines archetypes).
          */
-        fun citesInText(text: String, archetype: String): Boolean {
-            val a = archetype.trim()
-            if (a.isEmpty()) return false
-            return QUOTES.any { (open, close) -> text.contains("$open$a$close", ignoreCase = true) }
-        }
-
-        private val QUOTES = listOf("\"" to "\"", "“" to "”", "'" to "'")
+        fun isDirectMember(card: Card, archetype: String): Boolean =
+            card.archetype.equals(archetype, ignoreCase = true) || nameContains(card.name, archetype)
 
         fun nameContains(name: String, word: String): Boolean {
             if (word.isBlank()) return false

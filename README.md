@@ -7,9 +7,13 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
 - **Card database**: the full card list from the [YGOPRODeck API](https://ygoprodeck.com/api-guide/),
   downloaded once, kept on the phone, and refreshed automatically when YGOPRODeck publishes a new
   version (checked once a day). Browse by name or by archetype.
-- **Archetype detection**: a card belongs to an archetype when YGOPRODeck tags it with it, when the
-  archetype name appears as a whole word in the card's name, or when the card's text cites the
-  archetype in quotes (e.g. `add 1 "Branded" card`).
+- **Archetype detection**, in three steps:
+  1. YGOPRODeck tags the card with the archetype, the archetype is a whole word in its name, or its
+     text cites the archetype in quotes (`add 1 "Branded" card`);
+  2. a card named in the text of at least 2 cards from step 1 (many Branded cards name
+     "Fallen of Albaz", so Albaz is Branded);
+  3. a card whose text names a card from step 1 or 2 (Ecclesia names "Fallen of Albaz", so it's
+     Branded too).
 - **Decks**: pick one or more archetypes, a format (TCG / OCG) and a time span:
   - *Recent*: last 2 weeks, or since the last banlist if that came out less than 2 weeks ago
   - *This banlist*: since the last Forbidden & Limited list
@@ -20,6 +24,7 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
   - **Engine** (cards of the chosen archetypes) and **Non-engine** (everything else)
   - each into **Main**, **Side**, **Mix** and **Niche**
 
+  Inside each category cards are sorted by type: Monsters, Spells, Traps, Fusion, Synchro, Xyz, Link.
   Results are saved in the deck list. Tap a card for its details; swipe left/right for the next one.
 - **In-app updates** from this repository's GitHub releases.
 

@@ -51,7 +51,7 @@ fun CardsScreen(ui: UiState, vm: AppViewModel) {
         val q = query.trim()
         when {
             q.length < 2 -> emptyList()
-            byArchetype -> vm.db.cards.filter { CardDatabase.isInArchetype(it, q) }
+            byArchetype -> vm.db.membersOf(q).let { ids -> vm.db.cards.filter { it.id in ids } }.sortedBy { it.group.ordinal }
             else -> vm.db.cards.filter { it.name.contains(q, ignoreCase = true) }
                 .sortedBy { if (it.name.startsWith(q, ignoreCase = true)) 0 else 1 }
         }.take(500)

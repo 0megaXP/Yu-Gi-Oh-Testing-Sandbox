@@ -128,7 +128,7 @@ class DeckSearch(private val db: CardDatabase) {
             CardStat(
                 cardId = id,
                 name = card?.name ?: "Unknown card #$id",
-                engine = card != null && archetypes.any { CardDatabase.isInArchetype(card, it) },
+                engine = card != null && archetypes.any { db.isInArchetype(card, it) },
                 usage = usage,
                 mainRate = t.mainDecks / n,
                 sideRate = t.sideDecks / n,
@@ -165,7 +165,7 @@ class DeckSearch(private val db: CardDatabase) {
     /** True when the deck has at least [MIN_COPIES] cards of every chosen archetype in Main + Extra. */
     private fun playsAll(d: RemoteDeck, archetypes: List<String>): Boolean {
         val cards = (d.main + d.extra).mapNotNull { db.find(it) }
-        return archetypes.all { a -> cards.count { CardDatabase.isInArchetype(it, a) } >= MIN_COPIES }
+        return archetypes.all { a -> cards.count { db.isInArchetype(it, a) } >= MIN_COPIES }
     }
 
     private fun formatMatches(d: RemoteDeck, format: GameFormat, ocgByText: Boolean): Boolean {

@@ -48,6 +48,7 @@ import coil.compose.AsyncImage
 import com.ygosandbox.app.AppViewModel
 import com.ygosandbox.app.UiState
 import com.ygosandbox.app.data.Banlists
+import com.ygosandbox.app.model.CardGroup
 import com.ygosandbox.app.model.CardStat
 import com.ygosandbox.app.model.DeckAnalysis
 import com.ygosandbox.app.model.SourceDeck
@@ -65,8 +66,9 @@ fun DeckDetailScreen(ui: UiState, vm: AppViewModel, id: String) {
     var pagerStart by remember(id) { mutableStateOf<Int?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
 
-    val engine = remember(deck) { ordered(deck.cards.filter { it.engine }) }
-    val nonEngine = remember(deck) { ordered(deck.cards.filter { !it.engine }) }
+    val groupOf: (CardStat) -> CardGroup = { s -> vm.db.find(s.cardId)?.group ?: CardGroup.UNKNOWN }
+    val engine = remember(deck, ui.dbRevision) { ordered(deck.cards.filter { it.engine }, groupOf) }
+    val nonEngine = remember(deck, ui.dbRevision) { ordered(deck.cards.filter { !it.engine }, groupOf) }
     val shown = if (tab == 0) engine else nonEngine
 
     Box(Modifier.fillMaxSize()) {
@@ -106,9 +108,12 @@ fun DeckDetailScreen(ui: UiState, vm: AppViewModel, id: String) {
     )
 }
 
-/** Main, Side, Mix, Niche; most played first inside each. */
-private fun ordered(list: List<CardStat>) =
-    list.sortedWith(compareBy<CardStat> { it.usage.ordinal }.thenByDescending { it.anyRate }.thenBy { it.name })
+/** Main, Side, Mix, Niche; inside each by card type (Monster, Spell, Trap, Fusion…), then most played. */
+private fun ordered(list: List<CardStat>, groupOf: (CardStat) -> CardGroup) =
+    list.sortedWith(
+        compareBy<CardStat> { it.usage.ordinal }.thenBy { groupOf(it).ordinal }
+            .thenByDescending { it.anyRate }.thenBy { it.name },
+    )
 
 @Composable
 private fun Summary(d: DeckAnalysis) {
@@ -150,8 +155,18 @@ private fun CardSections(cards: List<CardStat>, vm: AppViewModel, dbRevision: In
                     Text(usage.help, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            items(rows, key = { "c_${it.value.cardId}" }) { (index, stat) ->
-                CardRow(stat, vm, dbRevision) { onOpen(index) }
+            rows.groupBy { vm.db.find(it.value.cardId)?.group ?: CardGroup.UNKNOWN }.forEach { (group, typed) ->
+                item(key = "g_${usage.name}_${group.name}") {
+                    Text(
+                        "${group.label} · ${typed.size}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 2.dp),
+                    )
+                }
+                items(typed, key = { "c_${it.value.cardId}" }) { (index, stat) ->
+                    CardRow(stat, vm, dbRevision) { onOpen(index) }
+                }
             }
         }
     }

@@ -26,9 +26,26 @@ data class Card(
     val isLink: Boolean get() = frameType.startsWith("link")
     val isXyz: Boolean get() = frameType.startsWith("xyz")
 
+    /** Sorting group: Main Deck monsters, Spells, Traps, then Extra Deck by summon type. */
+    val group: CardGroup
+        get() = when {
+            frameType.startsWith("fusion") -> CardGroup.FUSION
+            frameType.startsWith("synchro") -> CardGroup.SYNCHRO
+            frameType.startsWith("xyz") -> CardGroup.XYZ
+            frameType.startsWith("link") -> CardGroup.LINK
+            frameType == "spell" || type.contains("Spell") -> CardGroup.SPELL
+            frameType == "trap" || type.contains("Trap") -> CardGroup.TRAP
+            else -> CardGroup.MONSTER
+        }
+
     fun imageUrl(small: Boolean = false) =
         if (small) "https://images.ygoprodeck.com/images/cards_small/$id.jpg"
         else "https://images.ygoprodeck.com/images/cards/$id.jpg"
+}
+
+enum class CardGroup(val label: String) {
+    MONSTER("Monsters"), SPELL("Spells"), TRAP("Traps"),
+    FUSION("Fusion"), SYNCHRO("Synchro"), XYZ("Xyz"), LINK("Link"), UNKNOWN("Other"),
 }
 
 enum class GameFormat(val label: String) { TCG("TCG"), OCG("OCG") }

@@ -28,7 +28,7 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
   - each into **Main**, **Side**, **Mix** and **Niche**
 
   Inside each category cards are sorted by type: Monsters, Spells, Traps, Fusion, Synchro, Xyz, Link.
-  Results are saved in the deck list. Tap a card for its details; swipe left/right for the next one.
+  Results are saved in the deck list. Tap a card for its details; use the arrows for the previous or next one.
 - **In-app updates** from this repository's GitHub releases.
 
 ### How cards are sorted

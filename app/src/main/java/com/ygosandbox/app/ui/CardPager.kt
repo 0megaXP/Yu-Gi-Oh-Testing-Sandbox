@@ -19,7 +19,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -40,7 +46,7 @@ import com.ygosandbox.app.model.GameFormat
 /** One page of the card viewer. [card] is null when the card isn't in the database. */
 data class PagerItem(val cardId: Long, val name: String, val card: Card?, val stat: CardStat? = null)
 
-/** Full-screen card details. Swipe left/right for the next or previous card. */
+/** Full-screen card details, with arrow buttons for the previous and next card. */
 @Composable
 fun CardPager(items: List<PagerItem>, start: Int, format: GameFormat, onClose: () -> Unit) {
     BackHandler(onBack = onClose)
@@ -56,28 +62,40 @@ fun CardPager(items: List<PagerItem>, start: Int, format: GameFormat, onClose: (
                     modifier = Modifier.weight(1f),
                 )
             }
-            HorizontalPager(state = pager, modifier = Modifier.weight(1f), beyondViewportPageCount = 1) { page ->
-                CardPage(items[page], format)
+            val scope = rememberCoroutineScope()
+            HorizontalPager(
+                state = pager,
+                modifier = Modifier.weight(1f),
+                beyondViewportPageCount = 1,
+                userScrollEnabled = false,
+            ) { page ->
+                CardPage(
+                    items[page], format,
+                    onPrev = if (page > 0) ({ scope.launch { pager.animateScrollToPage(page - 1) } }) else null,
+                    onNext = if (page < items.size - 1) ({ scope.launch { pager.animateScrollToPage(page + 1) } }) else null,
+                )
             }
         }
     }
 }
 
 @Composable
-private fun CardPage(item: PagerItem, format: GameFormat) {
+private fun CardPage(item: PagerItem, format: GameFormat, onPrev: (() -> Unit)?, onNext: (() -> Unit)?) {
     val c = item.card
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            ArrowButton(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Previous card", onPrev)
             AsyncImage(
                 model = c?.imageUrl() ?: "https://images.ygoprodeck.com/images/cards/${item.cardId}.jpg",
                 contentDescription = item.name,
                 contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxWidth(0.72f).aspectRatio(0.686f).clip(RoundedCornerShape(8.dp))
+                modifier = Modifier.weight(1f).aspectRatio(0.686f).clip(RoundedCornerShape(8.dp))
                     .background(MaterialTheme.colorScheme.surfaceContainerHigh),
             )
+            ArrowButton(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Next card", onNext)
         }
         Text(item.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
 
@@ -117,6 +135,15 @@ private fun CardPage(item: PagerItem, format: GameFormat) {
         }
         Spacer(Modifier.height(24.dp))
     }
+}
+
+@Composable
+private fun ArrowButton(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: (() -> Unit)?) {
+    FilledTonalIconButton(
+        onClick = { onClick?.invoke() },
+        enabled = onClick != null,
+        modifier = Modifier.padding(horizontal = 6.dp).size(48.dp),
+    ) { Icon(icon, label, Modifier.size(32.dp)) }
 }
 
 @Composable

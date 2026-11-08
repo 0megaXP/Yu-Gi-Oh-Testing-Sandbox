@@ -99,6 +99,8 @@ data class SourceDeck(
 data class DeckAnalysis(
     val id: String,
     val archetypes: List<String>,
+    /** Archetypes the decks must not play. */
+    val excluded: List<String> = emptyList(),
     val format: GameFormat,
     val span: TimeSpan,
     val createdAt: Long,
@@ -109,4 +111,5 @@ data class DeckAnalysis(
     val decks: List<SourceDeck>,
 ) {
     val title: String get() = archetypes.joinToString(" + ")
+    val excludedLabel: String get() = if (excluded.isEmpty()) "" else "without " + excluded.joinToString(", ")
 }

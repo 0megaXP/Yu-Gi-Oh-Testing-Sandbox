@@ -75,7 +75,7 @@ fun DeckDetailScreen(ui: UiState, vm: AppViewModel, id: String) {
         Column(Modifier.fillMaxSize()) {
             Header(deck.title, onBack = { vm.back() }) {
                 IconButton(
-                    onClick = { vm.startSearch(deck.archetypes, deck.format, deck.span, replaceId = deck.id) },
+                    onClick = { vm.startSearch(deck.archetypes, deck.excluded, deck.format, deck.span, replaceId = deck.id) },
                     enabled = ui.searching == null,
                 ) { Icon(Icons.Default.Refresh, "Search again") }
                 IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Default.Delete, "Delete") }
@@ -120,6 +120,7 @@ private fun Summary(d: DeckAnalysis) {
     val since = d.since.takeIf { it.isNotEmpty() }?.let { "since ${Banlists.pretty(LocalDate.parse(it))}" } ?: "all time"
     val older = d.decks.count { !it.currentFormat }
     Text(
+        (if (d.excluded.isNotEmpty()) d.excludedLabel.replaceFirstChar { it.uppercase() } + " · " else "") +
         "${d.format.label} · ${d.span.label} ($since) · ${d.decks.size} matching decks of ${d.decksScanned} checked" +
             (if (older > 0) " · $older from older formats" else ""),
         style = MaterialTheme.typography.bodySmall,

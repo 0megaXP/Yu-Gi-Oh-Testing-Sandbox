@@ -20,7 +20,7 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
   - *All time*: no limit; decks from older formats are marked
 
   The app reads YGOPRODeck's tournament decks, keeps those running at least 2 cards of every chosen
-  archetype (extra archetypes are fine), and splits the cards they play into:
+  archetype (extra archetypes are fine) and none of the ignored ones, and splits the cards they play into:
   - **Engine** (cards of the chosen archetypes) and **Non-engine** (everything else)
   - each into **Main**, **Side**, **Mix** and **Niche**
 

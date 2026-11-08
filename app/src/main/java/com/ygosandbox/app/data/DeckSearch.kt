@@ -39,6 +39,7 @@ class DeckSearch(private val db: CardDatabase) {
 
     suspend fun run(
         archetypes: List<String>,
+        excluded: List<String>,
         format: GameFormat,
         span: TimeSpan,
         banlists: List<LocalDate>,
@@ -83,7 +84,7 @@ class DeckSearch(private val db: CardDatabase) {
                 if (since != null && d.date != null && d.date.isBefore(since)) continue
                 anyInRange = true
                 if (!formatMatches(d, format, filterOcgByText)) continue
-                if (playsAll(d, archetypes)) matched += d
+                if (playsAll(d, archetypes) && !playsAny(d, excluded, archetypes)) matched += d
             }
             oldPagesInARow = if (anyInRange) 0 else oldPagesInARow + 1
             // Decks come newest first; two pages in a row that are entirely too old means we're done.
@@ -94,7 +95,9 @@ class DeckSearch(private val db: CardDatabase) {
             throw NoDecksException(
                 "Checked $scanned ${format.label} tournament decks" +
                     (since?.let { " since ${Banlists.pretty(it)}" } ?: "") +
-                    ", but none play ${archetypes.joinToString(" + ")}. Try a longer time span.",
+                    ", but none play ${archetypes.joinToString(" + ")}" +
+                    (if (excluded.isNotEmpty()) " without ${excluded.joinToString(" / ")}" else "") +
+                    ". Try a longer time span.",
             )
         }
 
@@ -150,6 +153,7 @@ class DeckSearch(private val db: CardDatabase) {
         return DeckAnalysis(
             id = UUID.randomUUID().toString(),
             archetypes = archetypes,
+            excluded = excluded,
             format = format,
             span = span,
             createdAt = System.currentTimeMillis(),
@@ -158,6 +162,17 @@ class DeckSearch(private val db: CardDatabase) {
             cards = stats,
             decks = sources,
         )
+    }
+
+    /**
+     * True when the deck plays at least [MIN_COPIES] cards of any ignored archetype. Cards that also
+     * belong to a wanted archetype don't count, so a shared card can't knock out every deck.
+     */
+    private fun playsAny(d: RemoteDeck, excluded: List<String>, wanted: List<String>): Boolean {
+        if (excluded.isEmpty()) return false
+        val cards = (d.main + d.extra).mapNotNull { db.find(it) }
+            .filter { c -> wanted.none { db.isInArchetype(c, it) } }
+        return excluded.any { a -> cards.count { db.isInArchetype(it, a) } >= MIN_COPIES }
     }
 
     private fun canonical(id: Long): Long = db.find(id)?.id ?: id

@@ -36,6 +36,7 @@ class DeckStore(context: Context) {
     private fun toJson(d: DeckAnalysis) = JSONObject().apply {
         put("id", d.id)
         put("archetypes", JSONArray(d.archetypes))
+        put("excluded", JSONArray(d.excluded))
         put("format", d.format.name)
         put("span", d.span.name)
         put("createdAt", d.createdAt)
@@ -67,6 +68,7 @@ class DeckStore(context: Context) {
         return DeckAnalysis(
             id = o.getString("id"),
             archetypes = (0 until arch.length()).map { arch.getString(it) },
+            excluded = o.optJSONArray("excluded")?.let { e -> (0 until e.length()).map { e.getString(it) } } ?: emptyList(),
             format = GameFormat.valueOf(o.getString("format")),
             span = TimeSpan.valueOf(o.getString("span")),
             createdAt = o.getLong("createdAt"),

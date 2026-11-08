@@ -121,6 +121,10 @@ private fun DeckRow(d: DeckAnalysis, onClick: () -> Unit) {
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(d.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            if (d.excluded.isNotEmpty()) Text(
+                d.excludedLabel, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
             Text(
                 "${d.format.label} · ${d.span.label} · ${d.decks.size} decks",
                 style = MaterialTheme.typography.bodySmall,
@@ -160,25 +164,10 @@ fun SearchProgress(text: String, onCancel: () -> Unit) {
 @Composable
 fun NewSearchScreen(ui: UiState, vm: AppViewModel) {
     val selected = remember { mutableStateListOf<String>() }
-    var query by rememberSaveable { mutableStateOf("") }
+    val excluded = remember { mutableStateListOf<String>() }
     var format by rememberSaveable { mutableStateOf(GameFormat.TCG) }
     var span by rememberSaveable { mutableStateOf(TimeSpan.RECENT) }
-
-    val suggestions = remember(query, ui.archetypes, selected.size) {
-        val q = query.trim()
-        if (q.isEmpty()) emptyList()
-        else {
-            val pool = ui.archetypes.filter { a -> selected.none { it.equals(a, ignoreCase = true) } }
-            (pool.filter { it.startsWith(q, ignoreCase = true) } + pool.filter { it.contains(q, ignoreCase = true) })
-                .distinct().take(8)
-        }
-    }
-
-    fun add(a: String) {
-        val v = a.trim()
-        if (v.isNotEmpty() && selected.none { it.equals(v, ignoreCase = true) }) selected += v
-        query = ""
-    }
+    val ready = ui.dbStatus == DbStatus.READY
 
     Column(Modifier.fillMaxSize()) {
         Header("New deck search", onBack = { vm.back() })
@@ -188,54 +177,18 @@ fun NewSearchScreen(ui: UiState, vm: AppViewModel) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             SectionTitle("Archetypes")
-            Text(
-                "Decks must play all of these. Decks with extra archetypes are included.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            ArchetypePicker(
+                help = "Decks must play all of these. Decks with extra archetypes are included.",
+                field = if (ready) "Add an archetype" else "Card database still loading…",
+                tags = selected, taken = excluded, all = ui.archetypes,
             )
-            if (selected.isNotEmpty()) {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    selected.forEach { a ->
-                        InputChip(
-                            selected = true,
-                            onClick = { selected.remove(a) },
-                            label = { Text(a) },
-                            trailingIcon = { Icon(Icons.Default.Close, "Remove", Modifier.size(InputChipDefaults.IconSize)) },
-                        )
-                    }
-                }
-            }
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                label = { Text(if (ui.dbStatus == DbStatus.READY) "Add an archetype" else "Card database still loading…") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = {
-                    add(suggestions.firstOrNull { it.equals(query.trim(), ignoreCase = true) } ?: suggestions.firstOrNull() ?: query)
-                }),
-                trailingIcon = {
-                    if (query.isNotBlank()) IconButton(onClick = { add(query) }) { Icon(Icons.Default.Add, "Add as typed") }
-                },
-                modifier = Modifier.fillMaxWidth(),
+
+            SectionTitle("Ignore")
+            ArchetypePicker(
+                help = "Skip decks that play any of these (2 or more of their cards).",
+                field = "Archetype to ignore (optional)",
+                tags = excluded, taken = selected, all = ui.archetypes,
             )
-            if (suggestions.isNotEmpty()) {
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    shape = RoundedCornerShape(12.dp),
-                ) {
-                    Column {
-                        suggestions.forEachIndexed { i, s ->
-                            if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                            Text(
-                                s,
-                                modifier = Modifier.fillMaxWidth().clickable { add(s) }.padding(horizontal = 16.dp, vertical = 12.dp),
-                                maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                }
-            }
 
             SectionTitle("Format")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -268,7 +221,7 @@ fun NewSearchScreen(ui: UiState, vm: AppViewModel) {
 
             Spacer(Modifier.height(4.dp))
             Button(
-                onClick = { vm.startSearch(selected.toList(), format, span) },
+                onClick = { vm.startSearch(selected.toList(), excluded.toList(), format, span) },
                 enabled = selected.isNotEmpty() && ui.searching == null && ui.cardCount > 0,
                 modifier = Modifier.fillMaxWidth().height(52.dp),
             ) {
@@ -281,6 +234,75 @@ fun NewSearchScreen(ui: UiState, vm: AppViewModel) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+/** Tag input with suggestions from the archetype list. [taken] are tags used by the other list. */
+@Composable
+private fun ArchetypePicker(
+    help: String,
+    field: String,
+    tags: androidx.compose.runtime.snapshots.SnapshotStateList<String>,
+    taken: List<String>,
+    all: List<String>,
+) {
+    var query by rememberSaveable { mutableStateOf("") }
+    val suggestions = remember(query, all, tags.size, taken.size) {
+        val q = query.trim()
+        if (q.isEmpty()) emptyList()
+        else {
+            val pool = all.filter { a -> (tags + taken).none { it.equals(a, ignoreCase = true) } }
+            (pool.filter { it.startsWith(q, ignoreCase = true) } + pool.filter { it.contains(q, ignoreCase = true) })
+                .distinct().take(8)
+        }
+    }
+
+    fun add(a: String) {
+        val v = a.trim()
+        if (v.isNotEmpty() && (tags + taken).none { it.equals(v, ignoreCase = true) }) tags += v
+        query = ""
+    }
+
+    Text(help, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    if (tags.isNotEmpty()) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            tags.toList().forEach { a ->
+                InputChip(
+                    selected = true,
+                    onClick = { tags.remove(a) },
+                    label = { Text(a) },
+                    trailingIcon = { Icon(Icons.Default.Close, "Remove", Modifier.size(InputChipDefaults.IconSize)) },
+                )
+            }
+        }
+    }
+    OutlinedTextField(
+        value = query,
+        onValueChange = { query = it },
+        label = { Text(field) },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+        keyboardActions = KeyboardActions(onDone = {
+            add(suggestions.firstOrNull { it.equals(query.trim(), ignoreCase = true) } ?: suggestions.firstOrNull() ?: query)
+        }),
+        trailingIcon = {
+            if (query.isNotBlank()) IconButton(onClick = { add(query) }) { Icon(Icons.Default.Add, "Add as typed") }
+        },
+        modifier = Modifier.fillMaxWidth(),
+    )
+    if (suggestions.isNotEmpty()) {
+        Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = RoundedCornerShape(12.dp)) {
+            Column {
+                suggestions.forEachIndexed { i, s ->
+                    if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    Text(
+                        s,
+                        modifier = Modifier.fillMaxWidth().clickable { add(s) }.padding(horizontal = 16.dp, vertical = 12.dp),
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
         }
     }
 }

@@ -155,7 +155,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun banlistDates(format: GameFormat) = Banlists.dates(format, settings.customBanlists(format.name))
 
-    fun startSearch(archetypes: List<String>, format: GameFormat, span: TimeSpan, replaceId: String? = null) {
+    fun startSearch(
+        archetypes: List<String>,
+        excluded: List<String>,
+        format: GameFormat,
+        span: TimeSpan,
+        replaceId: String? = null,
+    ) {
         if (_ui.value.searching != null) return
         if (_ui.value.dbStatus != DbStatus.READY && db.cards.isEmpty()) {
             showMessage("Wait for the card database to finish downloading")
@@ -164,7 +170,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         searchJob = viewModelScope.launch {
             _ui.update { it.copy(searching = "Starting…") }
             try {
-                val result = search.run(archetypes, format, span, banlistDates(format)) { p ->
+                val result = search.run(archetypes, excluded, format, span, banlistDates(format)) { p ->
                     _ui.update { it.copy(searching = p) }
                 }
                 val list = listOf(result) + _ui.value.decks.filter { it.id != replaceId }

@@ -115,3 +115,44 @@ data class DeckAnalysis(
     val title: String get() = archetypes.joinToString(" + ")
     val excludedLabel: String get() = if (excluded.isEmpty()) "" else "without " + excluded.joinToString(", ")
 }
+
+// ---------------- User decks ----------------
+
+enum class DeckPart(val label: String, val min: Int, val max: Int) {
+    MAIN("Main Deck", 40, 60), EXTRA("Extra Deck", 0, 15), SIDE("Side Deck", 0, 15),
+}
+
+/** A deck the user builds and saves. Card lists hold one entry per copy. */
+data class SavedDeck(
+    val id: String,
+    val name: String,
+    val format: GameFormat,
+    val main: List<Long>,
+    val extra: List<Long>,
+    val side: List<Long>,
+    val createdAt: Long,
+    val updatedAt: Long,
+) {
+    fun part(p: DeckPart): List<Long> = when (p) {
+        DeckPart.MAIN -> main
+        DeckPart.EXTRA -> extra
+        DeckPart.SIDE -> side
+    }
+
+    fun withPart(p: DeckPart, cards: List<Long>): SavedDeck = when (p) {
+        DeckPart.MAIN -> copy(main = cards)
+        DeckPart.EXTRA -> copy(extra = cards)
+        DeckPart.SIDE -> copy(side = cards)
+    }
+
+    /** Copies of a card across Main, Extra and Side. */
+    fun copiesOf(id: Long): Int = main.count { it == id } + extra.count { it == id } + side.count { it == id }
+}
+
+/** Highest number of copies the banlist allows. */
+fun banLimit(status: String): Int = when (status.lowercase()) {
+    "forbidden", "banned" -> 0
+    "limited" -> 1
+    "semi-limited" -> 2
+    else -> 3
+}

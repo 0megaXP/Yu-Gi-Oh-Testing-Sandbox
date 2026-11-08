@@ -7,6 +7,9 @@ import com.ygosandbox.app.data.Banlists
 import com.ygosandbox.app.data.CardDatabase
 import com.ygosandbox.app.data.DeckSearch
 import com.ygosandbox.app.data.DeckStore
+import com.ygosandbox.app.data.MyDeckStore
+import com.ygosandbox.app.model.DeckPart
+import com.ygosandbox.app.model.SavedDeck
 import com.ygosandbox.app.data.Settings
 import com.ygosandbox.app.model.DeckAnalysis
 import com.ygosandbox.app.model.GameFormat
@@ -27,6 +30,8 @@ sealed interface Screen {
     data object NewSearch : Screen
     data class DeckDetail(val id: String) : Screen
     data object Cards : Screen
+    data object MyDecks : Screen
+    data class DeckEditor(val id: String) : Screen
     data object Settings : Screen
 }
 
@@ -42,6 +47,8 @@ data class UiState(
     val cardCount: Int = 0,
     val archetypes: List<String> = emptyList(),
     val decks: List<DeckAnalysis> = emptyList(),
+    /** The user's own decks, most recently edited first. */
+    val myDecks: List<SavedDeck> = emptyList(),
     /** Progress text while a deck search runs, otherwise null. */
     val searching: String? = null,
     val message: String? = null,
@@ -55,10 +62,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val settings = Settings(app)
     val db = CardDatabase(app)
     private val store = DeckStore(app)
+    private val myStore = MyDeckStore(app)
     private val search = DeckSearch(db)
     private var searchJob: Job? = null
 
-    private val _ui = MutableStateFlow(UiState(decks = store.load().sortedByDescending { it.createdAt }))
+    private val _ui = MutableStateFlow(
+        UiState(
+            decks = store.load().sortedByDescending { it.createdAt },
+            myDecks = myStore.load().sortedByDescending { it.updatedAt },
+        ),
+    )
     val ui: StateFlow<UiState> = _ui.asStateFlow()
 
     init {
@@ -201,6 +214,91 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val list = _ui.value.decks.filter { it.id != id }
         store.save(list)
         _ui.update { s -> s.copy(decks = list, stack = s.stack.filter { it != Screen.DeckDetail(id) }) }
+    }
+
+    // ---------- My decks ----------
+
+    /** Creates an empty deck and opens it in the editor. */
+    fun createDeck(name: String, format: GameFormat = GameFormat.TCG) {
+        val now = System.currentTimeMillis()
+        val deck = SavedDeck(
+            id = java.util.UUID.randomUUID().toString(),
+            name = name.trim().ifEmpty { "New deck" },
+            format = format, main = emptyList(), extra = emptyList(), side = emptyList(),
+            createdAt = now, updatedAt = now,
+        )
+        saveMyDecks(listOf(deck) + _ui.value.myDecks)
+        open(Screen.DeckEditor(deck.id))
+    }
+
+    fun renameDeck(id: String, name: String) {
+        val clean = name.trim()
+        if (clean.isEmpty()) return
+        changeDeck(id) { it.copy(name = clean) }
+    }
+
+    fun setDeckFormat(id: String, format: GameFormat) = changeDeck(id) { it.copy(format = format) }
+
+    fun deleteMyDeck(id: String) {
+        saveMyDecks(_ui.value.myDecks.filter { it.id != id })
+        _ui.update { s -> s.copy(stack = s.stack.filter { it != Screen.DeckEditor(id) }) }
+    }
+
+    /**
+     * Adds one copy of a card. Extra Deck monsters go to the Extra Deck unless [toSide].
+     * Returns a message when the card can't be added.
+     */
+    fun addCard(deckId: String, cardId: Long, toSide: Boolean): String? {
+        val deck = _ui.value.myDecks.firstOrNull { it.id == deckId } ?: return null
+        val card = db.find(cardId) ?: return "Card not found"
+        val id = card.id
+        if (deck.copiesOf(id) >= 3) return "You already have 3 copies of ${card.name}"
+        val part = when {
+            toSide -> DeckPart.SIDE
+            card.isExtraDeck -> DeckPart.EXTRA
+            else -> DeckPart.MAIN
+        }
+        val list = deck.part(part)
+        if (list.size >= part.max) return "The ${part.label} is full (${part.max} cards)"
+        changeDeck(deckId) { it.withPart(part, list + id) }
+        return null
+    }
+
+    fun removeCard(deckId: String, cardId: Long, part: DeckPart) = changeDeck(deckId) { d ->
+        val list = d.part(part).toMutableList()
+        val i = list.lastIndexOf(cardId)
+        if (i >= 0) list.removeAt(i)
+        d.withPart(part, list)
+    }
+
+    /** Moves one copy between the Main/Extra Deck and the Side Deck. */
+    fun moveCard(deckId: String, cardId: Long, from: DeckPart): String? {
+        val deck = _ui.value.myDecks.firstOrNull { it.id == deckId } ?: return null
+        val card = db.find(cardId)
+        val to = if (from != DeckPart.SIDE) DeckPart.SIDE else if (card?.isExtraDeck == true) DeckPart.EXTRA else DeckPart.MAIN
+        if (deck.part(to).size >= to.max) return "The ${to.label} is full (${to.max} cards)"
+        val src = deck.part(from).toMutableList()
+        val i = src.lastIndexOf(cardId)
+        if (i < 0) return null
+        src.removeAt(i)
+        changeDeck(deckId) { it.withPart(from, src).withPart(to, it.part(to) + cardId) }
+        return null
+    }
+
+    private fun changeDeck(id: String, change: (SavedDeck) -> SavedDeck) {
+        val list = _ui.value.myDecks
+        val old = list.firstOrNull { it.id == id } ?: return
+        val updated = change(old).copy(updatedAt = System.currentTimeMillis())
+        saveMyDecks(listOf(updated) + list.filter { it.id != id })
+    }
+
+    private fun saveMyDecks(list: List<SavedDeck>) {
+        _ui.update { it.copy(myDecks = list) }
+        try {
+            myStore.save(list)
+        } catch (e: Exception) {
+            showMessage("Couldn't save your decks: ${e.message}")
+        }
     }
 
     // ---------- Banlists ----------

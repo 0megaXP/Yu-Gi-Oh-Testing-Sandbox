@@ -19,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Style
 import androidx.compose.material.icons.filled.ViewCarousel
@@ -75,6 +76,8 @@ fun SandboxApp(vm: AppViewModel) {
                     Screen.NewSearch -> NewSearchScreen(ui, vm)
                     is Screen.DeckDetail -> DeckDetailScreen(ui, vm, s.id)
                     Screen.Cards -> CardsScreen(ui, vm)
+                    Screen.MyDecks -> MyDecksScreen(ui, vm)
+                    is Screen.DeckEditor -> DeckEditorScreen(ui, vm, s.id)
                     Screen.Settings -> SettingsScreen(ui, vm)
                 }
             }
@@ -118,8 +121,13 @@ private fun MainMenu(ui: UiState, vm: AppViewModel) {
         DbStatusLine(ui, vm)
         Spacer(Modifier.height(4.dp))
         MenuTile(
-            Icons.Default.ViewCarousel, "Decks",
-            if (ui.decks.isEmpty()) "Search what tournament decks play for any archetype"
+            Icons.Default.Layers, "My decks",
+            if (ui.myDecks.isEmpty()) "Build, edit and save your own decks"
+            else "${ui.myDecks.size} deck${if (ui.myDecks.size == 1) "" else "s"}",
+        ) { vm.open(Screen.MyDecks) }
+        MenuTile(
+            Icons.Default.ViewCarousel, "Archetype search",
+            if (ui.decks.isEmpty()) "See what tournament decks play with any archetype"
             else "${ui.decks.size} saved · search a new archetype",
         ) { vm.open(Screen.Decks) }
         MenuTile(

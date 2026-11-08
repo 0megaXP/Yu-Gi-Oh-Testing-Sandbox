@@ -76,7 +76,7 @@ import java.util.Date
 fun DecksScreen(ui: UiState, vm: AppViewModel) {
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            Header("Decks", onBack = { vm.back() })
+            Header("Archetype search", onBack = { vm.back() })
             ui.searching?.let { SearchProgress(it, onCancel = { vm.cancelSearch() }) }
             if (ui.decks.isEmpty()) {
                 Column(

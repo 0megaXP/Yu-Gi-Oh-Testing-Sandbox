@@ -56,10 +56,14 @@ class DeckStore(context: Context) {
                 put(JSONObject().apply {
                     put("n", s.name); put("d", s.date); put("t", s.tournament); put("p", s.placement)
                     put("u", s.url); put("f", s.formatLabel); put("c", s.currentFormat)
+                    put("cm", JSONArray(s.main)); put("ce", JSONArray(s.extra)); put("cs", JSONArray(s.side))
                 })
             }
         })
     }
+
+    private fun ids(a: JSONArray?): List<Long> =
+        if (a == null) emptyList() else (0 until a.length()).map { a.getLong(it) }
 
     private fun fromJson(o: JSONObject): DeckAnalysis {
         val arch = o.getJSONArray("archetypes")
@@ -90,6 +94,7 @@ class DeckStore(context: Context) {
                     name = s.optString("n"), date = s.optString("d"), tournament = s.optString("t"),
                     placement = s.optString("p"), url = s.optString("u"), formatLabel = s.optString("f"),
                     currentFormat = s.optBoolean("c"),
+                    main = ids(s.optJSONArray("cm")), extra = ids(s.optJSONArray("ce")), side = ids(s.optJSONArray("cs")),
                 )
             },
         )

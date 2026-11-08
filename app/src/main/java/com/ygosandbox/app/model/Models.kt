@@ -95,7 +95,13 @@ data class SourceDeck(
     /** Which banlist period the deck belongs to, e.g. "Current format" or "Format of 2 Feb 2026". */
     val formatLabel: String,
     val currentFormat: Boolean,
-)
+    /** The deck's card list, downloaded with the search (one entry per copy). Empty for old saves. */
+    val main: List<Long> = emptyList(),
+    val extra: List<Long> = emptyList(),
+    val side: List<Long> = emptyList(),
+) {
+    val hasList: Boolean get() = main.isNotEmpty() || extra.isNotEmpty()
+}
 
 /** A saved search result in the Decks list. */
 data class DeckAnalysis(

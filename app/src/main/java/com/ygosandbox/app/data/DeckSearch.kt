@@ -152,6 +152,7 @@ class DeckSearch(private val db: CardDatabase) {
             SourceDeck(
                 name = d.name, date = d.date?.toString() ?: "", tournament = d.tournament,
                 placement = d.placement, url = d.url, formatLabel = label, currentFormat = current,
+                main = d.main, extra = d.extra, side = d.side,
             )
         }
 

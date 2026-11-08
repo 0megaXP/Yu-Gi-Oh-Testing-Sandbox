@@ -78,6 +78,7 @@ fun DeckDetailScreen(ui: UiState, vm: AppViewModel, id: String) {
     var tab by rememberSaveable(id) { mutableIntStateOf(0) }
     var pagerStart by remember(id) { mutableStateOf<Int?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var viewing by remember(id) { mutableStateOf<SourceDeck?>(null) }
 
     val groupOf: (CardStat) -> CardGroup = { s -> vm.db.find(s.cardId)?.group ?: CardGroup.UNKNOWN }
     val engine = remember(deck, ui.dbRevision) { ordered(deck.cards.filter { it.engine }, groupOf) }
@@ -101,7 +102,7 @@ fun DeckDetailScreen(ui: UiState, vm: AppViewModel, id: String) {
                 Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Non-engine (${nonEngine.size})") })
                 Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Decks (${deck.decks.size})") })
             }
-            if (tab == 2) SourceDeckList(deck.decks)
+            if (tab == 2) SourceDeckList(deck.decks, onOpen = { viewing = it })
             else CardSections(shown, vm, ui.dbRevision) { index -> pagerStart = index }
         }
 
@@ -111,6 +112,7 @@ fun DeckDetailScreen(ui: UiState, vm: AppViewModel, id: String) {
             }
             CardPager(items, start, deck.format, onClose = { pagerStart = null })
         }
+        viewing?.let { d -> SourceDeckViewer(d, deck.format, vm, ui.dbRevision, onClose = { viewing = null }) }
     }
 
     if (confirmDelete) AlertDialog(
@@ -335,7 +337,7 @@ private fun placingOf(text: String): Placing {
 }
 
 @Composable
-private fun SourceDeckList(decks: List<SourceDeck>) {
+private fun SourceDeckList(decks: List<SourceDeck>, onOpen: (SourceDeck) -> Unit) {
     val uri = LocalUriHandler.current
     val groups = remember(decks) { decks.groupBy { placingOf(it.placement) }.toSortedMap() }
     // Group names that are closed; all groups start open.
@@ -369,7 +371,9 @@ private fun SourceDeckList(decks: List<SourceDeck>) {
                 }
             }
             if (isOpen) itemsIndexed(list, key = { i, _ -> "d_${placing.name}_$i" }) { _, d ->
-                SourceDeckCard(d) { if (d.url.isNotEmpty()) runCatching { uri.openUri(d.url) } }
+                SourceDeckCard(d) {
+                    if (d.hasList) onOpen(d) else if (d.url.isNotEmpty()) runCatching { uri.openUri(d.url) }
+                }
             }
         }
         item { Spacer(Modifier.height(16.dp)) }
@@ -381,7 +385,7 @@ private fun SourceDeckCard(d: SourceDeck, onClick: () -> Unit) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.fillMaxWidth().clickable(enabled = d.url.isNotEmpty(), onClick = onClick),
+        modifier = Modifier.fillMaxWidth().clickable(enabled = d.hasList || d.url.isNotEmpty(), onClick = onClick),
     ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(d.name, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)

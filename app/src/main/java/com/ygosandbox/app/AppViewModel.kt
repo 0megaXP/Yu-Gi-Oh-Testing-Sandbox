@@ -231,6 +231,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         open(Screen.DeckEditor(deck.id))
     }
 
+    /** Copies a tournament deck from a search result into My decks. Returns the new deck's name. */
+    fun importDeck(source: com.ygosandbox.app.model.SourceDeck, format: GameFormat): String {
+        val now = System.currentTimeMillis()
+        fun canon(ids: List<Long>) = ids.map { db.find(it)?.id ?: it }
+        val base = source.name.ifBlank { "Imported deck" }
+        val taken = _ui.value.myDecks.map { it.name }.toSet()
+        val name = if (base !in taken) base else (2..999).map { "$base ($it)" }.first { it !in taken }
+        val deck = SavedDeck(
+            id = java.util.UUID.randomUUID().toString(), name = name, format = format,
+            main = canon(source.main), extra = canon(source.extra), side = canon(source.side),
+            createdAt = now, updatedAt = now,
+        )
+        saveMyDecks(listOf(deck) + _ui.value.myDecks)
+        return name
+    }
+
     fun renameDeck(id: String, name: String) {
         val clean = name.trim()
         if (clean.isEmpty()) return

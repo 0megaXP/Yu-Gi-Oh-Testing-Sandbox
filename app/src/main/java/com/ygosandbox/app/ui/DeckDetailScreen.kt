@@ -1,0 +1,232 @@
+package com.ygosandbox.app.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
+import com.ygosandbox.app.AppViewModel
+import com.ygosandbox.app.UiState
+import com.ygosandbox.app.data.Banlists
+import com.ygosandbox.app.model.CardStat
+import com.ygosandbox.app.model.DeckAnalysis
+import com.ygosandbox.app.model.SourceDeck
+import com.ygosandbox.app.model.Usage
+import java.time.LocalDate
+
+@Composable
+fun DeckDetailScreen(ui: UiState, vm: AppViewModel, id: String) {
+    val deck = ui.decks.firstOrNull { it.id == id }
+    if (deck == null) {
+        Column { Header("Deck", onBack = { vm.back() }) }
+        return
+    }
+    var tab by rememberSaveable(id) { mutableIntStateOf(0) }
+    var pagerStart by remember(id) { mutableStateOf<Int?>(null) }
+    var confirmDelete by remember { mutableStateOf(false) }
+
+    val engine = remember(deck) { ordered(deck.cards.filter { it.engine }) }
+    val nonEngine = remember(deck) { ordered(deck.cards.filter { !it.engine }) }
+    val shown = if (tab == 0) engine else nonEngine
+
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
+            Header(deck.title, onBack = { vm.back() }) {
+                IconButton(
+                    onClick = { vm.startSearch(deck.archetypes, deck.format, deck.span, replaceId = deck.id) },
+                    enabled = ui.searching == null,
+                ) { Icon(Icons.Default.Refresh, "Search again") }
+                IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Default.Delete, "Delete") }
+            }
+            ui.searching?.let { SearchProgress(it, onCancel = { vm.cancelSearch() }) }
+            Summary(deck)
+            TabRow(selectedTabIndex = tab) {
+                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Engine (${engine.size})") })
+                Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Non-engine (${nonEngine.size})") })
+                Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Decks (${deck.decks.size})") })
+            }
+            if (tab == 2) SourceDeckList(deck.decks)
+            else CardSections(shown, vm, ui.dbRevision) { index -> pagerStart = index }
+        }
+
+        pagerStart?.let { start ->
+            val items = remember(shown, ui.dbRevision) {
+                shown.map { PagerItem(it.cardId, it.name, vm.db.find(it.cardId), it) }
+            }
+            CardPager(items, start, deck.format, onClose = { pagerStart = null })
+        }
+    }
+
+    if (confirmDelete) AlertDialog(
+        onDismissRequest = { confirmDelete = false },
+        title = { Text("Delete ${deck.title}?") },
+        text = { Text("This removes the saved analysis from your deck list.") },
+        confirmButton = { TextButton(onClick = { confirmDelete = false; vm.deleteDeck(deck.id) }) { Text("Delete") } },
+        dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+    )
+}
+
+/** Main, Side, Mix, Niche; most played first inside each. */
+private fun ordered(list: List<CardStat>) =
+    list.sortedWith(compareBy<CardStat> { it.usage.ordinal }.thenByDescending { it.anyRate }.thenBy { it.name })
+
+@Composable
+private fun Summary(d: DeckAnalysis) {
+    val since = d.since.takeIf { it.isNotEmpty() }?.let { "since ${Banlists.pretty(LocalDate.parse(it))}" } ?: "all time"
+    val older = d.decks.count { !it.currentFormat }
+    Text(
+        "${d.format.label} · ${d.span.label} ($since) · ${d.decks.size} matching decks of ${d.decksScanned} checked" +
+            (if (older > 0) " · $older from older formats" else ""),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+    )
+}
+
+@Composable
+private fun CardSections(cards: List<CardStat>, vm: AppViewModel, dbRevision: Int, onOpen: (Int) -> Unit) {
+    if (cards.isEmpty()) {
+        Text(
+            "No cards in this category.",
+            modifier = Modifier.padding(24.dp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return
+    }
+    val indexed = cards.withIndex().toList()
+    val groups = indexed.groupBy { it.value.usage }
+    LazyColumn(contentPadding = PaddingValues(bottom = 32.dp)) {
+        Usage.entries.forEach { usage ->
+            val rows = groups[usage].orEmpty()
+            if (rows.isEmpty()) return@forEach
+            item(key = "h_${usage.name}") {
+                Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 6.dp)) {
+                    Text(
+                        "${usage.label} · ${rows.size}",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(usage.help, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            items(rows, key = { "c_${it.value.cardId}" }) { (index, stat) ->
+                CardRow(stat, vm, dbRevision) { onOpen(index) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CardRow(s: CardStat, vm: AppViewModel, dbRevision: Int, onClick: () -> Unit) {
+    val card = remember(s.cardId, dbRevision) { vm.db.find(s.cardId) }
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AsyncImage(
+            model = card?.imageUrl(small = true) ?: "https://images.ygoprodeck.com/images/cards_small/${s.cardId}.jpg",
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.width(40.dp).height(58.dp).clip(RoundedCornerShape(3.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (card != null) {
+                    Box(Modifier.size(width = 4.dp, height = 14.dp).background(frameColor(card.frameType), RoundedCornerShape(2.dp)))
+                    Spacer(Modifier.width(6.dp))
+                }
+                Text(s.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+            }
+            Text(
+                statLine(s),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(pct(s.anyRate), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+    }
+}
+
+@Composable
+private fun SourceDeckList(decks: List<SourceDeck>) {
+    val uri = LocalUriHandler.current
+    LazyColumn(
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(decks) { d ->
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().clickable(enabled = d.url.isNotEmpty()) {
+                    runCatching { uri.openUri(d.url) }
+                },
+            ) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(d.name, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    val event = listOf(d.placement, d.tournament).filter { it.isNotBlank() }.joinToString(" · ")
+                    if (event.isNotEmpty()) Text(event, style = MaterialTheme.typography.bodySmall)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (d.date.isNotEmpty()) Text(
+                            Banlists.pretty(LocalDate.parse(d.date)),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            d.formatLabel,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = if (d.currentFormat) FontWeight.Normal else FontWeight.SemiBold,
+                            color = if (d.currentFormat) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            }
+        }
+        item { Spacer(Modifier.height(16.dp)) }
+    }
+}

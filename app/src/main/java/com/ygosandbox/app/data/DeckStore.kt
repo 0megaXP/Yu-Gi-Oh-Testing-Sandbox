@@ -46,7 +46,7 @@ class DeckStore(context: Context) {
             d.cards.forEach { c ->
                 put(JSONObject().apply {
                     put("id", c.cardId); put("n", c.name); put("e", c.engine); put("u", c.usage.name)
-                    put("m", c.mainRate.toDouble()); put("s", c.sideRate.toDouble()); put("a", c.anyRate.toDouble())
+                    put("m", c.mainRate.toDouble()); put("s", c.sideRate.toDouble()); put("a", c.anyRate.toDouble()); put("b", c.bothRate.toDouble())
                     put("am", c.avgMain.toDouble()); put("as", c.avgSide.toDouble()); put("x", c.extraDeck)
                 })
             }
@@ -80,7 +80,7 @@ class DeckStore(context: Context) {
                     cardId = c.getLong("id"), name = c.getString("n"), engine = c.getBoolean("e"),
                     usage = Usage.valueOf(c.getString("u")),
                     mainRate = c.getDouble("m").toFloat(), sideRate = c.getDouble("s").toFloat(),
-                    anyRate = c.getDouble("a").toFloat(), avgMain = c.getDouble("am").toFloat(),
+                    anyRate = c.getDouble("a").toFloat(), bothRate = c.optDouble("b", 0.0).toFloat(), avgMain = c.getDouble("am").toFloat(),
                     avgSide = c.getDouble("as").toFloat(), extraDeck = c.optBoolean("x"),
                 )
             },

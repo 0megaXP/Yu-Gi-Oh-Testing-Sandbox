@@ -103,7 +103,7 @@ class DeckSearch(private val db: CardDatabase) {
 
         // ---- 2. Count cards ----
         onProgress("Analysing ${matched.size} decks…")
-        class Tally { var mainDecks = 0; var sideDecks = 0; var anyDecks = 0; var mainCopies = 0; var sideCopies = 0 }
+        class Tally { var mainDecks = 0; var sideDecks = 0; var bothDecks = 0; var anyDecks = 0; var mainCopies = 0; var sideCopies = 0 }
         val tallies = LinkedHashMap<Long, Tally>()
         val extraIds = HashSet<Long>()
         for (d in matched) {
@@ -115,17 +115,21 @@ class DeckSearch(private val db: CardDatabase) {
                 t.anyDecks++
                 main[id]?.let { t.mainDecks++; t.mainCopies += it }
                 side[id]?.let { t.sideDecks++; t.sideCopies += it }
+                if (id in main && id in side) t.bothDecks++
             }
         }
         val n = matched.size.toFloat()
         val stats = tallies.map { (id, t) ->
             val card = db.find(id)
             val anyRate = t.anyDecks / n
-            val mainShare = t.mainDecks.toFloat() / (t.mainDecks + t.sideDecks)
+            // Main and Side are judged on their own: a card in the Main of 90% of the decks that play
+            // it is Main, even if many of those decks also side extra copies.
+            val inMain = t.mainDecks.toFloat() / t.anyDecks
+            val inSide = t.sideDecks.toFloat() / t.anyDecks
             val usage = when {
                 anyRate < NICHE_BELOW -> Usage.NICHE
-                mainShare >= MAIN_SHARE -> Usage.MAIN
-                mainShare <= 1f - MAIN_SHARE -> Usage.SIDE
+                inMain >= MAIN_SHARE -> Usage.MAIN
+                inSide >= MAIN_SHARE -> Usage.SIDE
                 else -> Usage.MIX
             }
             CardStat(
@@ -135,6 +139,7 @@ class DeckSearch(private val db: CardDatabase) {
                 usage = usage,
                 mainRate = t.mainDecks / n,
                 sideRate = t.sideDecks / n,
+                bothRate = t.bothDecks / n,
                 anyRate = anyRate,
                 avgMain = if (t.mainDecks > 0) t.mainCopies.toFloat() / t.mainDecks else 0f,
                 avgSide = if (t.sideDecks > 0) t.sideCopies.toFloat() / t.sideDecks else 0f,
@@ -247,7 +252,7 @@ class DeckSearch(private val db: CardDatabase) {
         const val MIN_COPIES = 2
         /** Played in fewer than this share of decks → Niche. */
         const val NICHE_BELOW = 0.25f
-        /** Main (or Side) when at least this share of the decks that play it put it there. */
+        /** Main (or Side) when at least this share of the decks that play it have it there. */
         const val MAIN_SHARE = 0.8f
 
         private val ID_PATTERN = Regex("\\d{3,10}")

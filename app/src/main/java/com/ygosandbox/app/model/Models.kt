@@ -60,7 +60,7 @@ enum class TimeSpan(val label: String, val help: String) {
 enum class Usage(val label: String, val help: String) {
     MAIN("Main", "In the Main or Extra Deck of most lists that play it"),
     SIDE("Side", "In the Side Deck of most lists that play it"),
-    MIX("Mix", "Commonly played, split between Main and Side"),
+    MIX("Mix", "Commonly played, but some lists main it and others side it"),
     NICHE("Niche", "Played in only a few lists"),
 }
 
@@ -74,6 +74,8 @@ data class CardStat(
     val mainRate: Float,
     /** Share of analysed decks with the card in the Side Deck (0..1). */
     val sideRate: Float,
+    /** Share of analysed decks with the card in both Main/Extra and Side (0..1). */
+    val bothRate: Float = 0f,
     /** Share of analysed decks that play the card anywhere (0..1). */
     val anyRate: Float,
     /** Average copies in Main/Extra among decks that main it. */

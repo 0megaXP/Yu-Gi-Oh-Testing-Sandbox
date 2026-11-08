@@ -36,9 +36,11 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
 | Category | Rule |
 |---|---|
 | Niche | played in fewer than 25% of the matching decks |
-| Main | otherwise, at least 80% of the decks that play it have it in Main/Extra |
+| Main | otherwise, at least 80% of the decks that play it have it in Main/Extra (even if they also side copies) |
 | Side | otherwise, at least 80% of the decks that play it have it in the Side |
-| Mix | everything else (split between Main and Side) |
+| Mix | everything else: some lists main it, others side it |
+
+Decks that run a card in both Main and Side are shown as a separate "Both" percentage.
 
 The thresholds are in `DeckSearch.kt` (`NICHE_BELOW`, `MAIN_SHARE`, `MIN_COPIES`).
 

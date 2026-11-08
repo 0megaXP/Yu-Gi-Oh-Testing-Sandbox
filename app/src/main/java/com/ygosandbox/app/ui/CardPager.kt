@@ -174,11 +174,12 @@ private fun StatBlock(s: CardStat) {
 fun pct(f: Float) = "${(f * 100).toInt()}%"
 fun copies(f: Float) = if (f == 0f) "" else "×" + String.format(java.util.Locale.US, "%.1f", f)
 
-/** "In 82% of decks · Main 80% ×2.7 · Side 4% ×1.0" */
+/** "In 82% of decks · Main 80% ×2.7 · Side 30% ×1.0 · Both 25%" */
 fun statLine(s: CardStat): String = buildList {
     add("In ${pct(s.anyRate)} of decks")
     if (s.mainRate > 0) add("${if (s.extraDeck) "Extra" else "Main"} ${pct(s.mainRate)} ${copies(s.avgMain)}")
     if (s.sideRate > 0) add("Side ${pct(s.sideRate)} ${copies(s.avgSide)}")
+    if (s.bothRate > 0) add("Both ${pct(s.bothRate)}")
 }.joinToString(" · ")
 
 fun typeLine(c: Card): String =

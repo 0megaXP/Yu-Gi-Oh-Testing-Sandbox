@@ -235,12 +235,26 @@ class CardDatabase(private val context: Context) {
         /**
          * A card belongs to an archetype when YGOPRODeck tags it with that archetype, or when the
          * archetype's name appears as a whole word in the card's name (that's how the game itself
-         * defines archetypes, and it catches cards YGOPRODeck lists under another archetype).
+         * defines archetypes, and it catches cards YGOPRODeck lists under another archetype), or when
+         * the card's text cites the archetype in quotes, e.g. Add 1 "Branded" card.
          */
         fun isInArchetype(card: Card, archetype: String): Boolean {
             if (card.archetype.equals(archetype, ignoreCase = true)) return true
-            return nameContains(card.name, archetype)
+            if (nameContains(card.name, archetype)) return true
+            return citesInText(card.desc, archetype)
         }
+
+        /**
+         * True when [text] mentions the archetype exactly as a quoted name ("Branded", “Branded”).
+         * Only exact quotes count, so "Dark Magician" doesn't make a card part of "Magician".
+         */
+        fun citesInText(text: String, archetype: String): Boolean {
+            val a = archetype.trim()
+            if (a.isEmpty()) return false
+            return QUOTES.any { (open, close) -> text.contains("$open$a$close", ignoreCase = true) }
+        }
+
+        private val QUOTES = listOf("\"" to "\"", "“" to "”", "'" to "'")
 
         fun nameContains(name: String, word: String): Boolean {
             if (word.isBlank()) return false

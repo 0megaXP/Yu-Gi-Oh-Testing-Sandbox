@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
@@ -286,41 +287,103 @@ private fun CardRow(s: CardStat, vm: AppViewModel, dbRevision: Int, onClick: () 
     }
 }
 
+/** Result groups for the Decks tab, best first. */
+private enum class Placing(val label: String) {
+    WIN("Winner"), SECOND("2nd place"), TOP4("Top 4"), TOP8("Top 8"), TOP16("Top 16"),
+    TOP32("Top 32"), TOP64("Top 64"), LOWER("Lower or unknown placing"),
+}
+
+private val TOP_N = Regex("top\\s*(\\d+)", RegexOption.IGNORE_CASE)
+private val RANK = Regex("(\\d+)\\s*(st|nd|rd|th)", RegexOption.IGNORE_CASE)
+
+/** Reads "1st Place", "Top 8", "3rd-4th", "Winner"… into a group. */
+private fun placingOf(text: String): Placing {
+    val t = text.trim()
+    val n = when {
+        t.isEmpty() -> null
+        t.contains("winner", ignoreCase = true) || t.contains("champion", ignoreCase = true) -> 1
+        else -> TOP_N.find(t)?.groupValues?.get(1)?.toIntOrNull()
+            ?: RANK.find(t)?.groupValues?.get(1)?.toIntOrNull()
+            ?: t.toIntOrNull()
+    } ?: return Placing.LOWER
+    return when {
+        n <= 1 -> Placing.WIN
+        n == 2 -> Placing.SECOND
+        n <= 4 -> Placing.TOP4
+        n <= 8 -> Placing.TOP8
+        n <= 16 -> Placing.TOP16
+        n <= 32 -> Placing.TOP32
+        n <= 64 -> Placing.TOP64
+        else -> Placing.LOWER
+    }
+}
+
 @Composable
 private fun SourceDeckList(decks: List<SourceDeck>) {
     val uri = LocalUriHandler.current
+    val groups = remember(decks) { decks.groupBy { placingOf(it.placement) }.toSortedMap() }
+    // Group names that are closed; all groups start open.
+    val closed = remember { androidx.compose.runtime.mutableStateListOf<String>() }
+
     LazyColumn(
-        contentPadding = PaddingValues(16.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        items(decks) { d ->
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth().clickable(enabled = d.url.isNotEmpty()) {
-                    runCatching { uri.openUri(d.url) }
-                },
-            ) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(d.name, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    val event = listOf(d.placement, d.tournament).filter { it.isNotBlank() }.joinToString(" · ")
-                    if (event.isNotEmpty()) Text(event, style = MaterialTheme.typography.bodySmall)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (d.date.isNotEmpty()) Text(
-                            Banlists.pretty(LocalDate.parse(d.date)),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(
-                            d.formatLabel,
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = if (d.currentFormat) FontWeight.Normal else FontWeight.SemiBold,
-                            color = if (d.currentFormat) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error,
-                        )
-                    }
+        groups.forEach { (placing, list) ->
+            val isOpen = placing.name !in closed
+            item(key = "p_${placing.name}") {
+                Row(
+                    Modifier.fillMaxWidth()
+                        .clickable { if (isOpen) closed += placing.name else closed.remove(placing.name) }
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "${placing.label} · ${list.size}",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Icon(
+                        if (isOpen) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        if (isOpen) "Close" else "Open",
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
                 }
+            }
+            if (isOpen) itemsIndexed(list, key = { i, _ -> "d_${placing.name}_$i" }) { _, d ->
+                SourceDeckCard(d) { if (d.url.isNotEmpty()) runCatching { uri.openUri(d.url) } }
             }
         }
         item { Spacer(Modifier.height(16.dp)) }
+    }
+}
+
+@Composable
+private fun SourceDeckCard(d: SourceDeck, onClick: () -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth().clickable(enabled = d.url.isNotEmpty(), onClick = onClick),
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(d.name, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            val event = listOf(d.placement, d.tournament).filter { it.isNotBlank() }.joinToString(" · ")
+            if (event.isNotEmpty()) Text(event, style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (d.date.isNotEmpty()) Text(
+                    Banlists.pretty(LocalDate.parse(d.date)),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    d.formatLabel,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = if (d.currentFormat) FontWeight.Normal else FontWeight.SemiBold,
+                    color = if (d.currentFormat) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error,
+                )
+            }
+        }
     }
 }

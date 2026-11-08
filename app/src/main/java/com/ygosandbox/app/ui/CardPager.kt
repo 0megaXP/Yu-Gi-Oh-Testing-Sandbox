@@ -50,6 +50,13 @@ data class PagerItem(val cardId: Long, val name: String, val card: Card?, val st
 @Composable
 fun CardPager(items: List<PagerItem>, start: Int, format: GameFormat, onClose: () -> Unit) {
     BackHandler(onBack = onClose)
+    // Opening a card from a search box: put the keyboard away.
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val focus = androidx.compose.ui.platform.LocalFocusManager.current
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        focus.clearFocus()
+        keyboard?.hide()
+    }
     val pager = rememberPagerState(initialPage = start.coerceIn(0, (items.size - 1).coerceAtLeast(0))) { items.size }
     Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {

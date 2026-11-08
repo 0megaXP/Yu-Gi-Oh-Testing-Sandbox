@@ -104,8 +104,13 @@ private fun MainMenu(ui: UiState, vm: AppViewModel) {
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Spacer(Modifier.height(12.dp))
-        Text("YGO Sandbox", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "YGO Sandbox", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = { vm.open(Screen.Settings) }) { Icon(Icons.Default.Settings, "Settings") }
+        }
         Text(
             "Test and learn decks from real tournament results.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -121,9 +126,6 @@ private fun MainMenu(ui: UiState, vm: AppViewModel) {
             Icons.Default.Style, "Card database",
             if (ui.cardCount > 0) "Browse ${ui.cardCount} cards and archetypes" else "Available once downloaded",
         ) { vm.open(Screen.Cards) }
-        MenuTile(Icons.Default.Settings, "Settings", "App updates, card database, banlist dates") {
-            vm.open(Screen.Settings)
-        }
         Spacer(Modifier.height(8.dp))
         Text(
             "Version ${BuildConfig.VERSION_NAME}",

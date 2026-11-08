@@ -14,6 +14,9 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
      "Fallen of Albaz", so Albaz is Branded);
   3. a card whose text names a card from step 1 or 2 (Ecclesia names "Fallen of Albaz", so it's
      Branded too).
+
+  Decks are matched only on step 1 cards, so a shared card like "Fallen of Albaz" can't make a
+  Sky Striker list look like Despia. Steps 2 and 3 decide which played cards count as engine.
 - **Decks**: pick one or more archetypes, a format (TCG / OCG) and a time span:
   - *Recent*: last 2 weeks, or since the last banlist if that came out less than 2 weeks ago
   - *This banlist*: since the last Forbidden & Limited list

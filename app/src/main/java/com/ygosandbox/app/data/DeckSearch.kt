@@ -171,16 +171,20 @@ class DeckSearch(private val db: CardDatabase) {
     private fun playsAny(d: RemoteDeck, excluded: List<String>, wanted: List<String>): Boolean {
         if (excluded.isEmpty()) return false
         val cards = (d.main + d.extra).mapNotNull { db.find(it) }
-            .filter { c -> wanted.none { db.isInArchetype(c, it) } }
-        return excluded.any { a -> cards.count { db.isInArchetype(it, a) } >= MIN_COPIES }
+            .filter { c -> wanted.none { db.isDirectlyInArchetype(c, it) } }
+        return excluded.any { a -> cards.count { db.isDirectlyInArchetype(it, a) } >= MIN_COPIES }
     }
 
     private fun canonical(id: Long): Long = db.find(id)?.id ?: id
 
-    /** True when the deck has at least [MIN_COPIES] cards of every chosen archetype in Main + Extra. */
+    /**
+     * True when the deck has at least [MIN_COPIES] cards that directly belong to every chosen
+     * archetype in Main + Extra. Cards that only join through a cited card (Ecclesia via Albaz)
+     * count as engine in the results, but not here.
+     */
     private fun playsAll(d: RemoteDeck, archetypes: List<String>): Boolean {
         val cards = (d.main + d.extra).mapNotNull { db.find(it) }
-        return archetypes.all { a -> cards.count { db.isInArchetype(it, a) } >= MIN_COPIES }
+        return archetypes.all { a -> cards.count { db.isDirectlyInArchetype(it, a) } >= MIN_COPIES }
     }
 
     private fun formatMatches(d: RemoteDeck, format: GameFormat, ocgByText: Boolean): Boolean {

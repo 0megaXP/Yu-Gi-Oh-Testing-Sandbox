@@ -36,6 +36,25 @@ class CardDatabase(private val context: Context) {
     /** Card name (lowercase) → card id. */
     @Volatile private var byName: Map<String, Long> = emptyMap()
     private val memberCache = HashMap<String, Set<Long>>()
+    private val directCache = HashMap<String, Set<Long>>()
+
+    /**
+     * Cards that belong to the archetype on their own: tagged by YGOPRODeck, the archetype is a
+     * whole word in the name, or the text cites the archetype in quotes. Decks are matched on these,
+     * so a shared card like "Fallen of Albaz" can't make a deck look like Despia or Branded.
+     */
+    fun directMembersOf(archetype: String): Set<Long> {
+        val key = archetype.trim().lowercase()
+        if (key.isEmpty()) return emptySet()
+        synchronized(directCache) { directCache[key]?.let { return it } }
+        val base = HashSet<Long>()
+        cards.forEach { if (isDirectMember(it, archetype)) base += it.id }
+        citedBy[key]?.let { base += it }
+        synchronized(directCache) { directCache[key] = base }
+        return base
+    }
+
+    fun isDirectlyInArchetype(card: Card, archetype: String): Boolean = card.id in directMembersOf(archetype)
 
     /**
      * Which cards belong to an archetype:
@@ -55,9 +74,7 @@ class CardDatabase(private val context: Context) {
         val names = byName
 
         // 1. direct members
-        val base = HashSet<Long>()
-        cards.forEach { if (isDirectMember(it, archetype)) base += it.id }
-        cited[key]?.let { base += it }
+        val base = directMembersOf(archetype)
 
         // 2. cards the archetype keeps naming
         val counts = HashMap<Long, Int>()
@@ -165,6 +182,7 @@ class CardDatabase(private val context: Context) {
         quotes = quoted
         byName = list.associate { it.name.lowercase() to it.id }
         synchronized(memberCache) { memberCache.clear() }
+        synchronized(directCache) { directCache.clear() }
     }
 
     private fun archetypesFromCards(list: List<Card>) =

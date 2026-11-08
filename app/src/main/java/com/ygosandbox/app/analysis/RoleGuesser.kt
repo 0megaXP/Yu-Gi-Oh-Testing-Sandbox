@@ -17,7 +17,7 @@ object RoleGuesser {
         val continuous = card.race == "Continuous"
         val quickPlay = card.race == "Quick-Play"
 
-        val fromHandSelf = "discard this card" in t || "send this card from your hand to the gy" in t ||
+        val fromHandSelf = "discard this card" in t || "send this card from your hand" in t ||
             "reveal this card in your hand" in t || "banish this card from your hand" in t
         val onOpponentsTurn = "(quick effect)" in t || "during either player's turn" in t ||
             "during your opponent's turn" in t || "when your opponent" in t || "if your opponent" in t
@@ -31,16 +31,16 @@ object RoleGuesser {
         val breaker = listOf(
             "destroy all", "banish all", "return all", "all face-up monsters your opponent controls",
             "to your opponent's field", "your opponent controls more", "shuffle all",
-            "monsters your opponent controls", "cards your opponent controls",
+            "monsters your opponent controls", "cards your opponent controls", "your opponent currently controls",
         ).any { it in t } && ("destroy" in t || "banish" in t || "negate" in t || "shuffle" in t || "return" in t || "tribute" in t)
-        if (breaker && !continuous) roles += Role.BREAKER
+        if ((breaker && !continuous) || ("take control of" in t && !continuous)) roles += Role.BREAKER
 
         // Interruptions (negates or removal you hold up)
         val removes = "negate" in t || "destroy" in t || "banish" in t || "return it to the hand" in t
         if ((isTrap && !continuous && removes) || (quickPlay && "negate" in t)) roles += Role.INTERRUPTION
 
         // Floodgates and enders
-        if ((continuous && ("cannot" in t || "neither player" in t || "negate" in t)) ||
+        if ((continuous && ("cannot" in t || "neither player" in t || "negate" in t || "can only control" in t)) ||
             (card.isMonster && ("your opponent cannot" in t || "neither player can" in t) && !fromHandSelf)
         ) roles += Role.ENDER
 

@@ -51,6 +51,13 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
   - **Used by the engine:** verified lines are split into sub-combos (pieces). The Play engine, the combo tree and the duel bots use them, together with the reference boards' pieces, for any deck that holds a piece's opening cards.
   - Needs an Anthropic API key, entered in the tab and kept only on the phone. The model can be changed there too (default `claude-sonnet-5-5`).
   - YouTube search and downloads use [NewPipe Extractor](https://github.com/TeamNewPipe/NewPipeExtractor) on the phone's own connection. When YouTube changes its site, searches can fail until the app updates the library. Saved per result in `combos/`.
+- **Replays from videos** (test): the *Replays* tab of an archetype search result.
+  - *Find match videos* searches YouTube for "<archetype> replay": feature matches, tournament rounds and ranked replays of 5 to 90 minutes, since the last banlist (or the last 6 months).
+  - Each match is read like a combo video, but more sparsely: a frame every 2 seconds, at most 360 kept. Both players are tracked through every game, and the commentary is used when YouTube has captions.
+  - The side playing the archetype is found from the cards each player uses. The match is left out as soon as that side plays a card none of the result's lists play, or if neither side can be told apart.
+  - Each match shows the result vs the opponent's deck, and every game with who went first and who won. Every turn has a one-line summary, the end board and the interruptions used (yours highlighted), plus turning points, side deck changes and takeaways.
+  - At the top, the record across the read matches: going first and second, and per opponent.
+  - Uses the same API key as the Combos tab. A 20-minute match costs roughly what 300 images do.
 - **Play engine** (test): finds the best plays for an opening hand against a real deck.
   - Pick your deck and the opponent's deck from My decks or any tournament list saved by an Archetype search.
   - Choose going first or second, your 5-card hand (pick or random) and a search depth.

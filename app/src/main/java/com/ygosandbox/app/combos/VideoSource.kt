@@ -48,7 +48,15 @@ object VideoSource {
         "pack opening", "opening packs", "unboxing", "tier list", "banlist", "ban list", "reaction",
         "lore", "anime", "price", "market watch", "podcast", "livestream", "live stream", "#shorts",
     )
-    private val GOOD = listOf("combo", "combos", "line", "lines", "endboard", "end board", "tutorial", "guide", "how to play")
+
+    /** What to look for: the search words, which titles rank first, and how long such videos run. */
+    enum class Kind(val query: String, val good: List<String>, val skip: List<String>, val minSeconds: Long, val maxSeconds: Long) {
+        COMBO("combo", listOf("combo", "combos", "line", "lines", "endboard", "end board", "tutorial", "guide", "how to play"),
+            emptyList(), 60, 1800),
+        // whole games: feature matches, tournament rounds, ranked replays
+        REPLAY("replay", listOf("replay", "feature match", "vs", "round", "top 8", "top 16", "top 4", "finals", "duel", "ranked", "gameplay"),
+            listOf("combo guide", "combos", "tutorial", "deck profile", "how to play"), 300, 5400),
+    }
 
     @Volatile private var ready = false
 
@@ -62,10 +70,15 @@ object VideoSource {
      * Combo videos for [archetype], best titles first. Titles must name the archetype; videos
      * uploaded before [since] (yyyy-MM-dd) are left out, as are Shorts and very long streams.
      */
-    suspend fun search(archetype: String, since: String?, limit: Int = 20): List<VideoHit> = withContext(Dispatchers.IO) {
+    suspend fun search(
+        archetype: String,
+        since: String?,
+        limit: Int = 20,
+        kind: Kind = Kind.COMBO,
+    ): List<VideoHit> = withContext(Dispatchers.IO) {
         init()
         val yt = ServiceList.YouTube
-        val query = yt.searchQHFactory.fromQuery("$archetype combo", listOf(YoutubeSearchQueryHandlerFactory.VIDEOS), "")
+        val query = yt.searchQHFactory.fromQuery("$archetype ${kind.query}", listOf(YoutubeSearchQueryHandlerFactory.VIDEOS), "")
         val extractor = yt.getSearchExtractor(query)
         extractor.fetchPage()
         val items = extractor.initialPage.items.toMutableList()
@@ -79,10 +92,11 @@ object VideoSource {
             val t = title.lowercase()
             if (SKIP.any { it in t } || words.any { it !in t }) return@mapNotNull null
             val seconds = item.duration
-            if (seconds in 0..59 || seconds > 1800) return@mapNotNull null
+            if (seconds in 0 until kind.minSeconds || seconds > kind.maxSeconds) return@mapNotNull null
             val date = item.uploadDate?.offsetDateTime()?.toLocalDate()?.toString() ?: ""
             if (since != null && date.isNotEmpty() && date < since) return@mapNotNull null
-            val score = 1 + GOOD.count { it in t }
+            if (kind.skip.any { it in t }) return@mapNotNull null
+            val score = 1 + kind.good.count { it in t }
             score to VideoHit(item.url, title, item.uploaderName ?: "", date, seconds)
         }.sortedByDescending { it.first }.map { it.second }.distinctBy { it.url }.take(limit)
     }

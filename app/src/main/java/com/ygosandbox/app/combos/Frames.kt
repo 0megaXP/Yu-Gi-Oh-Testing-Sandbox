@@ -26,6 +26,8 @@ object Frames {
         video: File,
         dir: File,
         maxFrames: Int = 300,
+        /** Milliseconds between sampled frames; whole games use a sparser step than combos. */
+        stepMs: Long = 1000,
         onProgress: (Float) -> Unit,
     ): List<Frame> = withContext(Dispatchers.IO) {
         dir.mkdirs()
@@ -56,7 +58,7 @@ object Frames {
                     }
                 }
                 onProgress(t.toFloat() / ms)
-                t += 1000
+                t += stepMs
             }
             settled?.let { (s, b) -> kept += save(b, s, dir) }
             if (kept.size <= maxFrames) kept

@@ -82,6 +82,7 @@ fun DeckDetailScreen(ui: UiState, vm: AppViewModel, id: String) {
     var confirmDelete by remember { mutableStateOf(false) }
     var viewing by remember(id) { mutableStateOf<SourceDeck?>(null) }
     val combos: ComboViewModel = viewModel()
+    val replays: com.ygosandbox.app.combos.ReplayViewModel = viewModel()
     var comboCards by remember(id) { mutableStateOf<Pair<List<Long>, Int>?>(null) }
 
     val groupOf: (CardStat) -> CardGroup = { s -> vm.db.find(s.cardId)?.group ?: CardGroup.UNKNOWN }
@@ -107,10 +108,12 @@ fun DeckDetailScreen(ui: UiState, vm: AppViewModel, id: String) {
                 Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Non-engine (${nonEngine.size})") })
                 Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Decks (${deck.decks.size})") })
                 Tab(selected = tab == 3, onClick = { tab = 3 }, text = { Text("Combos") })
+                Tab(selected = tab == 4, onClick = { tab = 4 }, text = { Text("Replays") })
             }
             when (tab) {
                 2 -> SourceDeckList(deck.decks, onOpen = { viewing = it })
                 3 -> CombosTab(deck, vm, combos, openCards = { codes, i -> comboCards = codes to i })
+                4 -> ReplaysTab(deck, vm, replays, openCards = { codes, i -> comboCards = codes to i })
                 else -> CardSections(shown, vm, ui.dbRevision) { index -> pagerStart = index }
             }
         }

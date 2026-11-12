@@ -97,9 +97,9 @@ class ComboReader(private val apiKey: String, private val model: String) {
         )
     }
 
-    private fun text(s: String) = JSONObject().put("type", "text").put("text", s)
+    internal fun text(s: String) = JSONObject().put("type", "text").put("text", s)
 
-    private fun captionsAround(captions: String, t0: Double, t1: Double): String =
+    internal fun captionsAround(captions: String, t0: Double, t1: Double): String =
         captions.lineSequence().filter { line ->
             val m = Regex("""^\[(\d+):(\d\d)]""").find(line) ?: return@filter false
             val t = m.groupValues[1].toInt() * 60 + m.groupValues[2].toInt()
@@ -107,7 +107,7 @@ class ComboReader(private val apiKey: String, private val model: String) {
         }.joinToString("\n")
 
     /** One Messages API call with a forced tool; retries rate limits and overloads. */
-    private suspend fun call(system: String, content: JSONArray, tool: JSONObject, maxTokens: Int): JSONObject {
+    internal suspend fun call(system: String, content: JSONArray, tool: JSONObject, maxTokens: Int): JSONObject {
         val body = JSONObject()
             .put("model", model)
             .put("max_tokens", maxTokens)
@@ -166,7 +166,7 @@ class ComboReader(private val apiKey: String, private val model: String) {
     companion object {
         const val DEFAULT_MODEL = "claude-sonnet-5-5"
 
-        private val ACTIONS = listOf(
+        internal val ACTIONS = listOf(
             "normal_summon", "special_summon", "link_summon", "xyz_summon", "synchro_summon", "fusion_summon",
             "ritual_summon", "pendulum_summon", "set", "activate", "chain", "resolve", "search", "draw", "send_to_gy",
             "banish", "attach", "return", "negate", "attack", "phase", "hand_shown", "board_shown", "other",
@@ -182,14 +182,14 @@ class ComboReader(private val apiKey: String, private val model: String) {
                 "candidates if the screen clearly shows another card. Frames are consecutive screens of one video, so don't " +
                 "log an action twice while it stays on screen. If nothing happens in these frames, return no events."
 
-        private fun schema(vararg props: Pair<String, JSONObject>, required: List<String>) = JSONObject()
+        internal fun schema(vararg props: Pair<String, JSONObject>, required: List<String>) = JSONObject()
             .put("type", "object")
             .put("properties", JSONObject().apply { props.forEach { (k, v) -> put(k, v) } })
             .put("required", JSONArray(required))
 
-        private fun str(desc: String? = null) = JSONObject().put("type", "string").apply { desc?.let { put("description", it) } }
-        private fun enum(values: List<String>) = JSONObject().put("type", "string").put("enum", JSONArray(values))
-        private fun arr(items: JSONObject, desc: String? = null) =
+        internal fun str(desc: String? = null) = JSONObject().put("type", "string").apply { desc?.let { put("description", it) } }
+        internal fun enum(values: List<String>) = JSONObject().put("type", "string").put("enum", JSONArray(values))
+        internal fun arr(items: JSONObject, desc: String? = null) =
             JSONObject().put("type", "array").put("items", items).apply { desc?.let { put("description", it) } }
 
         private val EVENTS_TOOL: JSONObject = JSONObject()

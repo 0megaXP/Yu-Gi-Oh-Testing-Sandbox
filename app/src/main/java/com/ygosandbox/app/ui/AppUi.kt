@@ -22,6 +22,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Style
 import androidx.compose.material.icons.filled.ViewCarousel
@@ -84,6 +85,7 @@ fun SandboxApp(vm: AppViewModel) {
                     is Screen.AnalysisDeck -> AnalysisDeckScreen(ui, vm, s.id)
                     Screen.Play -> PlayScreen(ui, vm)
                     is Screen.SidePlan -> SidePlanScreen(ui, vm, s.deckId)
+                    Screen.Duel -> DuelScreen(ui, vm)
                     Screen.Settings -> SettingsScreen(ui, vm)
                 }
             }
@@ -146,6 +148,11 @@ private fun MainMenu(ui: UiState, vm: AppViewModel) {
             "Best plays and end boards for a hand, against a real deck",
             badge = { TestBadge() },
         ) { vm.open(Screen.Play) }
+        MenuTile(
+            Icons.Default.SportsEsports, "Duel simulator",
+            "Play against the bot, or watch two bots duel",
+            badge = { TestBadge() },
+        ) { vm.open(Screen.Duel) }
         MenuTile(
             Icons.Default.Style, "Card database",
             if (ui.cardCount > 0) "Browse ${ui.cardCount} cards and archetypes" else "Available once downloaded",

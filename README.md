@@ -49,6 +49,15 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
   - The engine plays the real card rules (ygopro-core with the EDOPro scripts). It shows the top lines with their steps, the end board, what that board can stop against this opponent, and the opponent's strongest reply found when they play their turn against it.
   - Searches can be stopped early and keep what they found. Cards EDOPro can't play yet are listed.
 - **Side plan** (test): from a deck's Analysis page, pick an opponent deck to get what to side in and out, going first and going second, with the reason for each card. *Simulate their boards* first plays several of their opening turns and rates your board breakers against what they actually build.
+- **Duel simulator** (test): a full duel with the real card rules, in two modes: **You vs bot** or **Bot vs bot**.
+  - Pick both decks, who goes first and the bot level:
+    - *Easy*: simple priorities
+    - *Normal* / *Strong*: plans each turn by searching ahead, then follows the plan
+  - A delay between bot moves (0–3 s) keeps the game easy to follow, with pause, one-move step and a "Hurry" button while a bot thinks.
+  - The board shows both fields (opponent mirrored), the Extra Monster Zones, hands, LP, Deck/Extra/GY/banished counts (tap to see the cards) and a duel log.
+  - On your turn, the panel at the bottom lists every legal action or answer. Zone placement and other choices that never matter are made for you.
+  - In bot vs bot you can show both hands and set cards.
+  - The bot sees every card, including your hand.
 - **In-app updates** from this repository's GitHub releases.
 
 ### How cards are sorted
@@ -102,6 +111,7 @@ app/src/main/java/com/ygosandbox/app/
   data/Banlists.kt       banlist dates and format periods
   update/Updater.kt      in-app updater (GitHub releases)
   play/PlayModels.kt     Play engine / side plan state and deck choices
-  ui/                    Jetpack Compose screens (Play engine + side plan: ui/PlayScreens.kt)
+  play/DuelModels.kt     Duel simulator settings and state (game loop in AppViewModel)
+  ui/                    Jetpack Compose screens (Play engine + side plan: ui/PlayScreens.kt, duel: ui/DuelScreen.kt)
 engine/                  the play engine (submodule, Gradle module :ygoe)
 ```

@@ -23,6 +23,14 @@ import com.ygoengine.SearchSettings
 import com.ygoengine.SideState
 import com.ygoengine.YgoEngine
 import com.ygosandbox.app.play.DeckChoice
+import com.ygosandbox.app.play.DuelMode
+import com.ygosandbox.app.play.DuelSetup
+import com.ygosandbox.app.play.DuelUi
+import com.ygosandbox.app.play.FirstPlayer
+import com.ygoengine.LiveDuel
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import com.ygosandbox.app.play.HAND_SIZE
 import com.ygosandbox.app.play.PlaySetup
 import com.ygosandbox.app.play.PlayState
@@ -48,6 +56,7 @@ sealed interface Screen {
     data class AnalysisDeck(val id: String) : Screen
     data object Play : Screen
     data class SidePlan(val deckId: String) : Screen
+    data object Duel : Screen
     data object Settings : Screen
 }
 
@@ -74,6 +83,8 @@ data class UiState(
     val updateProgress: Float? = null,
     /** Play engine: setup, progress and results; also the side plan. */
     val play: PlayState = PlayState(),
+    /** Duel simulator. */
+    val duel: DuelUi = DuelUi(),
 ) {
     val screen: Screen get() = stack.last()
 }
@@ -545,7 +556,135 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         engine?.cancel()
     }
 
+    // ---------- Duel simulator ----------
+
+    private var liveDuel: LiveDuel? = null
+    private var duelJob: Job? = null
+    private var humanChoice: CompletableDeferred<Int>? = null
+    private val stepRequests = MutableStateFlow(0)
+
+    fun updateDuelSetup(change: (DuelSetup) -> DuelSetup) =
+        _ui.update { it.copy(duel = it.duel.copy(setup = change(it.duel.setup), error = null)) }
+
+    private fun updateDuel(change: (DuelUi) -> DuelUi) = _ui.update { it.copy(duel = change(it.duel)) }
+
+    fun startDuel() {
+        val setup = _ui.value.duel.setup
+        val d1 = deckChoice(setup.deck1)
+        val d2 = deckChoice(setup.deck2)
+        if (d1 == null || d2 == null) {
+            updateDuel { it.copy(error = "Pick both decks") }
+            return
+        }
+        stopDuel()
+        // The engine's player 0 always goes first; deck 1 (bottom of the board) may be either.
+        val deck1First = when (setup.first) {
+            FirstPlayer.ME -> true
+            FirstPlayer.THEM -> false
+            FirstPlayer.RANDOM -> kotlin.random.Random.nextBoolean()
+        }
+        val bottom = if (deck1First) 0 else 1
+        val humanMode = setup.mode == DuelMode.HUMAN_VS_BOT
+        val name1 = if (humanMode) "You" else "Bot 1 (${d1.name})"
+        val name2 = if (humanMode) "Bot" else "Bot 2 (${d2.name})"
+        val names = if (deck1First) listOf(name1, name2) else listOf(name2, name1)
+        val levels = if (deck1First) listOf(setup.level1, setup.level2) else listOf(setup.level2, setup.level1)
+        updateDuel {
+            it.copy(
+                active = true, starting = true, state = null, bottom = bottom,
+                human = if (humanMode) bottom else -1, names = names, levels = levels,
+                log = listOf("${names[0]} goes first."), paused = false, thinking = false, error = null,
+            )
+        }
+        duelJob = viewModelScope.launch {
+            try {
+                val duel = engine().newDuel(
+                    if (deck1First) d1.toEngine() else d2.toEngine(),
+                    if (deck1First) d2.toEngine() else d1.toEngine(),
+                )
+                liveDuel = duel
+                publishDuelState(duel)
+                updateDuel { it.copy(starting = false) }
+                playDuel(duel)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                updateDuel { it.copy(starting = false, error = "The duel stopped: ${e.message ?: e.toString()}") }
+            }
+        }
+    }
+
+    private suspend fun publishDuelState(duel: LiveDuel) {
+        val s = duel.state()
+        updateDuel { d ->
+            val lines = s.log.map { line -> line.replace("[P0]", d.names[0]).replace("[P1]", d.names[1]) }
+            d.copy(state = s, log = (d.log + lines).takeLast(600))
+        }
+    }
+
+    private suspend fun playDuel(duel: LiveDuel) {
+        while (true) {
+            val d = _ui.value.duel
+            val state = d.state ?: return
+            val decision = state.decision ?: break
+            if (state.ended) break
+            if (decision.player == d.human) {
+                val choice = CompletableDeferred<Int>()
+                humanChoice = choice
+                val index = choice.await()
+                humanChoice = null
+                if (!duel.respond(index)) showMessage("That choice isn't allowed right now")
+            } else {
+                // Bot: wait while paused (a Step request lets one move through), then the delay.
+                val steps = stepRequests.value
+                if (_ui.value.duel.paused) {
+                    kotlinx.coroutines.flow.combine(_ui, stepRequests) { u, s -> !u.duel.paused || s != steps }.first { it }
+                }
+                if (!_ui.value.duel.paused) delay(_ui.value.duel.setup.delayMs)
+                updateDuel { it.copy(thinking = true) }
+                try {
+                    duel.botMove(_ui.value.duel.levels[decision.player])
+                } finally {
+                    updateDuel { it.copy(thinking = false) }
+                }
+            }
+            publishDuelState(duel)
+        }
+    }
+
+    /** The person's answer to the current decision (option index). */
+    fun chooseDuelOption(index: Int) {
+        humanChoice?.complete(index)
+    }
+
+    fun pauseDuel(paused: Boolean) = updateDuel { it.copy(paused = paused) }
+
+    /** While paused: let the bot make one move. */
+    fun stepDuel() {
+        stepRequests.value += 1
+    }
+
+    /** Makes a thinking bot decide now. */
+    fun hurryBot() {
+        liveDuel?.hurryBot()
+    }
+
+    /** Ends the current duel and goes back to the setup. */
+    fun stopDuel() {
+        duelJob?.cancel()
+        duelJob = null
+        humanChoice?.cancel()
+        humanChoice = null
+        val d = liveDuel
+        liveDuel = null
+        if (d != null) viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) { d.close() }
+        updateDuel { it.copy(active = false, starting = false, thinking = false, state = null) }
+    }
+
     override fun onCleared() {
+        duelJob?.cancel()
+        liveDuel?.close()
+        liveDuel = null
         engine?.close()
         engine = null
     }

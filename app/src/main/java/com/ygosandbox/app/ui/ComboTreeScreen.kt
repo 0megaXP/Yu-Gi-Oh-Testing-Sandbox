@@ -60,6 +60,14 @@ fun ComboTreeScreen(ui: UiState, vm: AppViewModel) {
                             }
                         }
                         play.treeError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                        Text(
+                            if (reference?.libraryJson != null)
+                                "The search tries plans built from this deck's combo pieces (its reference boards) first."
+                            else
+                                "Tip: build this deck's reference boards to give the search its combo pieces.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                         play.treeProgress?.let { EngineProgress(it, play.preparing, onStop = { vm.stopPlay() }) }
                     }
                 }

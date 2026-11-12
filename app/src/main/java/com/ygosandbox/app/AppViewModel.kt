@@ -492,6 +492,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             me = if (setup.goingFirst) 0 else 1,
             knowledge = if (setup.real) Knowledge.REAL else Knowledge.PRACTICE,
             seed = System.currentTimeMillis(),
+            // Your deck's combo pieces, if its reference boards were built.
+            library = referenceFor(mine)?.libraryJson,
             settings = SearchSettings(
                 iterations = setup.depth.iterations,
                 verifyIterations = setup.depth.verifyIterations,
@@ -549,6 +551,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     iterations = setup.depth.iterations,
                     branchIterations = (setup.depth.iterations / 6).coerceIn(150, 800),
                     seed = System.currentTimeMillis(),
+                    library = referenceFor(mine)?.libraryJson,
                 ) { p -> _ui.update { it.copy(play = it.play.copy(treeProgress = p)) } }
                 _ui.update { it.copy(play = it.play.copy(tree = tree)) }
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -685,9 +688,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         duelJob = viewModelScope.launch {
             try {
+                // Each bot uses its deck's combo pieces when that deck has reference boards.
+                val lib1 = referenceFor(d1)?.libraryJson
+                val lib2 = referenceFor(d2)?.libraryJson
                 val duel = engine().newDuel(
                     if (deck1First) d1.toEngine() else d2.toEngine(),
                     if (deck1First) d2.toEngine() else d1.toEngine(),
+                    libraries = if (deck1First) listOf(lib1, lib2) else listOf(lib2, lib1),
                 )
                 liveDuel = duel
                 publishDuelState(duel)

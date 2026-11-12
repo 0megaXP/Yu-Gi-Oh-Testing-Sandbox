@@ -112,12 +112,15 @@ class CardNames(private val db: CardDatabase) {
      * A card from [pool] that [text] names, for text recognition: the whole text, a name inside it
      * ("Activate Angelechy Problem?"), or close enough to one (misread letters). Null if none.
      */
-    fun match(text: String, pool: Set<Long>, cutoff: Double): Long? {
+    fun match(text: String, pool: Set<Long>, cutoff: Double, whole: Boolean = false): Long? {
         val key = norm(text)
         if (key.length < 4) return null
         val names = preferPools.getOrPut(System.identityHashCode(pool)) { pool.associateBy { norm(name(it)) } }
         names[key]?.let { return it }
-        names.entries.filter { it.key.length >= 8 && key.contains(it.key) }.maxByOrNull { it.key.length }?.let { return it.value }
+        // a name inside a longer text; [whole] asks for the text to be just the name (a banner or
+        // card title, not a sentence or effect text that mentions other cards)
+        if (!whole)
+            names.entries.filter { it.key.length >= 8 && key.contains(it.key) }.maxByOrNull { it.key.length }?.let { return it.value }
         // fuzzy: bigrams of the pool's names are counted once, and lengths far apart are skipped
         val grams = poolGrams.getOrPut(System.identityHashCode(pool)) {
             names.map { (n, id) -> Triple(n, n.windowed(2).groupingBy { it }.eachCount(), id) }
@@ -129,12 +132,55 @@ class CardNames(private val db: CardDatabase) {
             if (n.length < key.length * 0.7 || n.length > key.length * 1.4) continue
             val common = mine.entries.sumOf { (k, c) -> minOf(c, g[k] ?: 0) }
             val score = 2.0 * common / (key.length - 1 + n.length - 1)
-            if (score >= bestScore) { bestScore = score; best = id }
+            if (score > bestScore || (best == null && score >= bestScore)) { bestScore = score; best = id }
         }
         return best
     }
 
+    /** [matchSpoken] with its score, so callers can prefer the best of several word windows. */
+    fun matchSpokenScored(words: String, pool: Set<Long>, cutoff: Double): Pair<Long, Double>? {
+        val id = matchSpoken(words, pool, cutoff) ?: return null
+        val key = norm(words).replace(" ", "")
+        val n = spokenGrams.getValue(System.identityHashCode(pool)).filter { it.third == id }
+            .maxOf { (n, g, _) ->
+                val mine = key.windowed(2).groupingBy { it }.eachCount()
+                2.0 * mine.entries.sumOf { (k, c) -> minOf(c, g[k] ?: 0) } / (key.length - 1 + n.length - 1)
+            }
+        return id to n
+    }
+
     private val poolGrams = java.util.concurrent.ConcurrentHashMap<Int, List<Triple<String, Map<String, Int>, Long>>>()
+    private val spokenGrams = java.util.concurrent.ConcurrentHashMap<Int, List<Triple<String, Map<String, Int>, Long>>>()
+
+    /**
+     * A card from [pool] that spoken words name, for captions: compared without spaces and
+     * punctuation, since auto-captions split and mishear names ("angel echy problem").
+     */
+    fun matchSpoken(words: String, pool: Set<Long>, cutoff: Double): Long? {
+        val key = norm(words).replace(" ", "")
+        if (key.length < 5) return null
+        val grams = spokenGrams.getOrPut(System.identityHashCode(pool)) {
+            // People say "Castellan" for "Angelechy Castellan": a name without a first word that
+            // 3+ cards of the pool share counts too.
+            val first = pool.map { norm(name(it)).split(' ') }.filter { it.size > 1 }.groupingBy { it[0] }.eachCount()
+            pool.flatMap { id ->
+                val w = norm(name(id)).split(' ')
+                val forms = mutableListOf(w.joinToString(""))
+                if (w.size > 1 && (first[w[0]] ?: 0) >= 3 && w.drop(1).joinToString("").length >= 6) forms += w.drop(1).joinToString("")
+                forms.map { n -> Triple(n, n.windowed(2).groupingBy { it }.eachCount(), id) }
+            }
+        }
+        val mine = key.windowed(2).groupingBy { it }.eachCount()
+        var best: Long? = null
+        var bestScore = cutoff
+        for ((n, g, id) in grams) {
+            if (n.length < key.length * 0.75 || n.length > key.length * 1.33) continue
+            val common = mine.entries.sumOf { (k, c) -> minOf(c, g[k] ?: 0) }
+            val score = 2.0 * common / (key.length - 1 + n.length - 1)
+            if (score >= bestScore) { bestScore = score; best = id }
+        }
+        return best
+    }
 
     fun isExtraDeck(id: Long): Boolean = db.find(id)?.isExtraDeck == true
 

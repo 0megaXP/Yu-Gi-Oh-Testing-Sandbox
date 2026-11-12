@@ -45,7 +45,11 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
 - **Combos from videos** (test): the *Combos* tab of an archetype search result.
   - *Find combo videos* searches YouTube for "<archetype> combo". It keeps only titles that name the archetype, skips pack openings, tier lists and Shorts, and drops videos older than the chosen period (default: since the last banlist).
   - **Two ways to read:**
-    - **Free reading (default):** on-device text recognition (ML Kit, offline) reads the card names on screen frame by frame. That gives the cards in the order they were played. The engine's check then replays them by the rules from the opening hand, working out each step and the end board.
+    - **Free reading (default):** reads what the video says and shows, on the phone. The source is chosen in order:
+      - **A duel log on screen,** if there is one.
+      - **Else the narration** (YouTube captions): cards said with an action word ("activate", "normal summon", "search"…), in the order said. Misheard names are matched against the deck lists, and short names ("Castellan") count too. Lines about what could happen ("if they have Ash…, instead…") are skipped, and the hand comes from lines like "we start with X and Y".
+      - **Else card names on screen** (ML Kit text recognition, offline). Only lines that are just a name count, like banners and card titles, not effect text or explanations mentioning other cards. A frame showing many names at once is skipped, and a card counts again only after it has left the screen.
+      - Then the engine's check replays the steps by the rules from the opening hand, working out what each did and the end board.
       - The opening hand comes from the title and description, or else the first cards played.
       - It works best with EDOPro and Master Duel videos.
       - On engine-made test lines reduced to names, 7 of 16 verified, against 12 with Claude's full reading.

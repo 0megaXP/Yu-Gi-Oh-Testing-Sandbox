@@ -153,7 +153,7 @@ class ReplayViewModel(app: Application) : AndroidViewModel(app) {
     ): Result {
         val handTraps = ComboViewModel.HAND_TRAPS.mapNotNull { cn.resolve(it, emptySet()) }.map { cn.canonical(it) }.toSet()
         val extra = allowed.filter { cn.isExtraDeck(it) }.toSet()
-        val r = FreeReader.read(video.frames, cn, allowed, handTraps, hit.title, video.description, extra) {
+        val r = FreeReader.read(video.frames, cn, allowed, handTraps, hit.title, video.description, extra, video.captions) {
             progress("Reading the games", 0.55f + 0.4f * it)
         }
         val base = MatchReplay(

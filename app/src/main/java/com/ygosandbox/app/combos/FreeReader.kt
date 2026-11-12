@@ -32,6 +32,8 @@ object FreeReader {
         /** The video has a duel log (actions and players come from it). */
         val log: Boolean,
         val hand: List<Long>,
+        /** What the steps were read from. */
+        val source: Source,
     ) {
         /** The cards played, in order (combo steps). */
         val cards: List<Event> get() = events.filter { it.code != null && it.action !in setOf("turn", "game_end", "attack", "draw") }
@@ -67,6 +69,7 @@ object FreeReader {
         title: String,
         description: String,
         extraDeck: Set<Long>,
+        captions: String = "",
         onProgress: (Float) -> Unit,
     ): Result = withContext(Dispatchers.Default) {
         val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
@@ -75,7 +78,8 @@ object FreeReader {
         val nameEvents = ArrayList<Event>()
         var logFrames = 0
         var previousLines = emptyMap<String, Int>()
-        var previousNames = emptySet<Long>()
+        val lastSeen = HashMap<Long, Int>()        // frame index a card's name was last on screen
+        val lastEvent = HashMap<Long, Double>()    // when a card last counted
         try {
             frames.forEachIndexed { i, f ->
                 coroutineContext.ensureActive()
@@ -101,33 +105,113 @@ object FreeReader {
                 if (logHere >= 2) logFrames++
                 previousLines = counts
 
-                // --- card names alone (banners, panels), also wrapped over two lines
+                // --- card names alone: only a line that is just the name (a banner or card title),
+                // not a sentence or effect text that mentions other cards; also wrapped over two lines
                 val found = LinkedHashSet<Long>()
                 for (c in lines + lines.zipWithNext { a, b -> "$a $b" }) {
-                    if (c.length < 5) continue
-                    cn.match(c, pool, 0.85)?.let { found += cn.canonical(it) }
+                    if (c.length < 5 || c.length > 60) continue
+                    cn.match(c, pool, 0.88, whole = true)?.let { found += cn.canonical(it) }
                 }
-                for (id in found) {
-                    if (id in previousNames) continue
-                    val last = nameEvents.lastOrNull()
-                    if (last != null && last.code == id && f.seconds - last.t < 4) continue
+                val fresh = found.filter { id ->
+                    // a card counts again only after it left the screen for a while
+                    val gone = i - (lastSeen[id] ?: -100)
+                    gone >= 3 && f.seconds - (lastEvent[id] ?: -100.0) >= 6
+                }
+                // many names appearing at once is an explanation box or a deck list, not a play
+                if (fresh.size < 4) fresh.forEach { id ->
                     nameEvents += Event(f.seconds, id, "use", null, false, cn.name(id))
+                    lastEvent[id] = f.seconds
                 }
-                previousNames = found
+                found.forEach { lastSeen[it] = i }
             }
         } finally {
             recognizer.close()
         }
-        // A video with a log: its lines are the record (names in card panels would repeat them).
+        // What to go by, best first: a duel log on screen; else the narration (cards said with an
+        // action, in the order said); else card names standing alone on screen.
         val log = logFrames >= 5 && logEvents.count { it.code != null } >= 3
-        val events = if (log) logEvents else nameEvents.filter { it.code !in handTraps }
+        val spoken = if (captions.isBlank()) Spoken(emptyList(), emptyList()) else fromCaptions(captions, cn, pool)
+        val narrated = !log && spoken.steps.count { it.code !in handTraps } >= 3
+        val events = when {
+            log -> logEvents
+            narrated -> spoken.steps
+            else -> nameEvents.filter { it.code !in handTraps }
+        }
+        val source = when { log -> Source.LOG; narrated -> Source.NARRATION; else -> Source.SCREEN }
 
-        // The opening hand: cards the title or description names, else the first Main Deck cards played.
+        // The opening hand: what the narration says is in hand, else the cards the title or
+        // description names, else the first Main Deck cards played.
         val named = (title.split(Regex("[,/+:|\\-–]| and | with ")) + description.lines().take(30))
             .mapNotNull { s -> s.trim().takeIf { it.length >= 5 }?.let { cn.match(it, allowed, 0.9) } }
             .map { cn.canonical(it) }.filter { it !in extraDeck }.distinct()
         val firstPlayed = events.mapNotNull { it.code }.filter { it in allowed && it !in extraDeck && it !in handTraps }.distinct().take(3)
-        Result(events, log, (named + firstPlayed).distinct().take(5))
+        val said = spoken.hand.filter { it in allowed && it !in extraDeck }
+        Result(events, log, (said.ifEmpty { named } + firstPlayed).distinct().take(5), source)
+    }
+
+    enum class Source { LOG, NARRATION, SCREEN }
+
+    private class Spoken(val steps: List<Event>, val hand: List<Long>)
+
+    private val STOP = ("with and to the a an we then so now our this that it its into for of in on from using use just you i um uh " +
+        "yeah first next summon summons summoning add adds search searches set sets activate activates link special normal " +
+        "discard send banish xyz synchro fusion two one my your their").split(' ').toSet()
+    private val SPOKEN_VERBS = listOf(
+        "link summon" to "link_summon", "xyz summon" to "xyz_summon", "synchro summon" to "synchro_summon",
+        "fusion summon" to "fusion_summon", "normal summon" to "normal_summon", "special summon" to "special_summon",
+        "summon" to "special_summon", "activat" to "activate", "search" to "search", "add" to "search", "send" to "send_to_gy",
+        "discard" to "send_to_gy", "banish" to "banish", "set" to "set", "use" to "activate",
+    )
+    // "if they have Ash, go into Shatranga instead": a line about what could happen, not a play
+    private val HYPOTHETICAL = Regex("""\b(if|instead|could|would|otherwise|in case|alternatively|or you)\b""")
+    private val HAND_CUE = Regex("""\b(hand|start|starting|opening|open)\b""")
+    private val STAMP = Regex("""^\[(\d+):(\d\d)]\s*(.*)$""")
+
+    /** Cards the narration names: with an action word before them, steps; in a line about the hand, the hand. */
+    private fun fromCaptions(captions: String, cn: CardNames, pool: Set<Long>): Spoken {
+        val steps = ArrayList<Event>()
+        val hand = ArrayList<Long>()
+        val lines = captions.lines()
+        lines.forEachIndexed { li, line ->
+            val m = STAMP.find(line) ?: return@forEachIndexed
+            val t = m.groupValues[1].toInt() * 60.0 + m.groupValues[2].toInt()
+            val text = m.groupValues[3].lowercase()
+            if (HYPOTHETICAL.containsMatchIn(text)) return@forEachIndexed
+            val words = CardNames.norm(text).split(' ').filter { it.isNotEmpty() }
+            var i = 0
+            while (i < words.size) {
+                if (words[i] in STOP) { i++; continue }
+                var best: Triple<Int, Long, Double>? = null
+                for (len in 1..6) {
+                    if (i + len > words.size || words[i + len - 1] in STOP) continue
+                    val hit = cn.matchSpokenScored(words.subList(i, i + len).joinToString(" "), pool, 0.75) ?: continue
+                    if (best == null || hit.second > best.third + 0.02) best = Triple(len, hit.first, hit.second)
+                }
+                if (best == null) { i++; continue }
+                val (len, id, _) = best
+                val action = verbBefore(words, i)
+                    ?: words.getOrNull(i + len)?.takeIf { it.startsWith("trigger") || it.startsWith("effect") || it.startsWith("activat") }
+                        ?.let { "activate" }
+                val code = cn.canonical(id)
+                when {
+                    action != null -> if (steps.lastOrNull()?.let { it.code == code && t - it.t < 6 } != true)
+                        steps += Event(t, code, action, null, false, text)
+                    HAND_CUE.containsMatchIn(text) && li < lines.size / 4 -> hand += code
+                }
+                i += len
+            }
+        }
+        return Spoken(steps, hand.distinct())
+    }
+
+    /** The action word closest before word [i]: two-word ones ("normal summon") checked first. */
+    private fun verbBefore(words: List<String>, i: Int): String? {
+        for (j in i - 1 downTo maxOf(0, i - 4)) {
+            val two = if (j > 0) words[j - 1] + " " + words[j] else ""
+            SPOKEN_VERBS.firstOrNull { (v, _) -> ' ' in v && two.startsWith(v) }?.let { return it.second }
+            SPOKEN_VERBS.firstOrNull { (v, _) -> ' ' !in v && words[j].startsWith(v) }?.let { return it.second }
+        }
+        return null
     }
 
     /** A duel log line: an action with a card, a turn line or a win line; null for anything else. */

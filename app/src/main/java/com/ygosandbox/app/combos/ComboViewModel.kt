@@ -225,7 +225,7 @@ class ComboViewModel(app: Application) : AndroidViewModel(app) {
     ): Outcome {
         val handTraps = HAND_TRAPS.mapNotNull { cn.resolve(it, emptySet()) }.map { cn.canonical(it) }.toSet()
         val extra = allowed.filter { cn.isExtraDeck(it) }.toSet()
-        val r = FreeReader.read(video.frames, cn, allowed, handTraps, hit.title, video.description, extra) {
+        val r = FreeReader.read(video.frames, cn, allowed, handTraps, hit.title, video.description, extra, video.captions) {
             progress("Reading card names", 0.45f + 0.45f * it)
         }
         // With a duel log naming players, the combo is the player whose cards the lists play.
@@ -242,14 +242,18 @@ class ComboViewModel(app: Application) : AndroidViewModel(app) {
                 url = hit.url, title = hit.title, uploader = hit.uploader, date = video.date.ifEmpty { hit.date },
                 going = "unknown",
                 hand = r.hand,
-                steps = steps.map { e -> ComboStep(e.t, e.action, e.code, cn.name(e.code!!), if (r.log) e.text else "") },
+                steps = steps.map { e -> ComboStep(e.t, e.action, e.code, cn.name(e.code!!), if (r.source != FreeReader.Source.SCREEN) e.text else "") },
                 endBoard = emptyList(),
                 interruptions = emptyList(),
                 chokePoints = emptyList(),
                 uncertain = listOf(
-                    if (r.log) "Read for free from the duel log on screen; the engine's check works out the end board."
-                    else "Read for free: the steps are the cards in the order their names appeared on screen. The engine's " +
-                        "check works out what each one did and the end board.",
+                    when (r.source) {
+                        FreeReader.Source.LOG -> "Read for free from the duel log on screen; the engine's check works out the end board."
+                        FreeReader.Source.NARRATION -> "Read for free from the narration (captions): the cards said with an action, " +
+                            "in the order said. The engine's check plays them by the rules and works out the end board."
+                        FreeReader.Source.SCREEN -> "Read for free from card names shown on screen (no captions or duel log). " +
+                            "The engine's check works out what each one did and the end board."
+                    },
                 ),
             )
         )

@@ -1,6 +1,7 @@
 package com.ygosandbox.app.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,6 +31,7 @@ private fun whereText(w: String) = when (w) {
     else -> w
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CardRow(vm: AppViewModel, cards: List<PieceCard>, open: (List<Long>, Int) -> Unit) {
     val codes = cards.map { it.code }

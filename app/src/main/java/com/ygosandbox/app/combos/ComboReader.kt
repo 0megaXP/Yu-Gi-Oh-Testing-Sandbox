@@ -11,7 +11,7 @@ import java.net.URL
 
 class ClaudeException(message: String) : Exception(message)
 
-/** The answer didn't fit (too long or too slow): this video fails, the next ones still run. */
+/** No usable answer for this video (too long, too slow, or none): it fails, the next ones still run. */
 class AnswerTooLong(message: String) : Exception(message)
 
 /**
@@ -140,7 +140,7 @@ class ComboReader(private val apiKey: String, private val model: String) {
                         val b = blocks.getJSONObject(i)
                         if (b.optString("type") == "tool_use") return b.getJSONObject("input")
                     }
-                    if (attempt == 4) throw ClaudeException("Claude returned no structured answer")
+                    if (attempt == 4) throw AnswerTooLong("Claude returned no usable answer for this video")
                 }
                 code == 598 -> if (++timeouts >= 2) throw AnswerTooLong("no answer within ${timeoutMs / 1000} s")
                 code == 401 -> throw ClaudeException("The API key was rejected (check it in the Combos tab settings)")

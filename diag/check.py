@@ -18,5 +18,11 @@ for c in cards:
             else: mism.append((i,c["name"],eng[i]))
     if not found: missing.append((c["id"],c["name"]))
 print("R| YGOPRODeck cards:",len(cards)," passcodes checked:",checked," same name:",ok," different name:",len(mism)," not in engine:",len(missing))
-for m in mism[:80]: print("R| DIFF",m)
-for m in missing[:60]: print("R| MISSING",m)
+byname={norm(n):i for i,n in eng.items()}
+rec=[(i,n,byname[norm(n)]) for i,n in missing if norm(n) in byname]
+print("R| missing but present under another id (name check fixes these):",len(rec))
+for r in rec: print("R| REC",r)
+# Would a TCG name of a DIFF card point at some other engine card?
+risky=[(i,a,b,byname[norm(a)]) for i,a,b in mism if norm(a) in byname and byname[norm(a)]!=i]
+print("R| translation diffs whose TCG name is another engine card:",len(risky))
+for r in risky: print("R| RISK",r)

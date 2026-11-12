@@ -7,6 +7,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
@@ -208,6 +209,8 @@ private fun DuelBoardScreen(d: DuelUi, vm: AppViewModel, onOpen: (List<Long>, In
     var showLog by remember { mutableStateOf(false) }
     val spots = remember { BoardSpots() }
     val colors = playerColors(d.bottom)
+    // Places with a card still flying in: they keep their old look until it lands.
+    val pending = remember(d.moveBatch) { Pending.of(d.moves) }
 
     Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
@@ -230,22 +233,13 @@ private fun DuelBoardScreen(d: DuelUi, vm: AppViewModel, onOpen: (List<Long>, In
         }
 
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 8.dp)) {
-            PlayerBar(d.names[top], s.players[top], top, colors.of(top), spots, active = s.turnPlayer == top, onPile = { t, l -> pile = t to l })
-            HandRow(vm, s.players[top].hand, top, spots, faceUp = reveal, onOpen)
+            PlayerBar(d.names[top], s.players[top], colors.of(top), active = s.turnPlayer == top)
+            HandRow(vm, s.players[top].hand, top, spots, pending, faceUp = reveal, onOpen)
             Spacer(Modifier.height(4.dp))
-            // Opponent's zones are mirrored: their zone 0 is on our right.
-            ZoneRow(vm, s.players[top].spells.take(5).reversed(), listOf(4, 3, 2, 1, 0), side = s.players[top].spells.getOrNull(5),
-                top, 's', spots, reveal, opponent = true, onOpen)
-            ZoneRow(vm, s.players[top].monsters.take(5).reversed(), listOf(4, 3, 2, 1, 0), side = null,
-                top, 'm', spots, reveal, opponent = true, onOpen)
-            ExtraZones(vm, s, d.bottom, spots, reveal, onOpen)
-            ZoneRow(vm, s.players[d.bottom].monsters.take(5), listOf(0, 1, 2, 3, 4), side = null,
-                d.bottom, 'm', spots, reveal = true, opponent = false, onOpen)
-            ZoneRow(vm, s.players[d.bottom].spells.take(5), listOf(0, 1, 2, 3, 4), side = s.players[d.bottom].spells.getOrNull(5),
-                d.bottom, 's', spots, reveal = true, opponent = false, onOpen)
+            Mat(vm, s, d.bottom, spots, pending, reveal, onOpen, onPile = { t, l -> pile = t to l }, names = d.names)
             Spacer(Modifier.height(4.dp))
-            HandRow(vm, s.players[d.bottom].hand, d.bottom, spots, faceUp = d.human >= 0 || reveal, onOpen)
-            PlayerBar(d.names[d.bottom], s.players[d.bottom], d.bottom, colors.of(d.bottom), spots, active = s.turnPlayer == d.bottom, onPile = { t, l -> pile = t to l })
+            HandRow(vm, s.players[d.bottom].hand, d.bottom, spots, pending, faceUp = d.human >= 0 || reveal, onOpen)
+            PlayerBar(d.names[d.bottom], s.players[d.bottom], colors.of(d.bottom), active = s.turnPlayer == d.bottom)
             LogPanel(d.log, d.names, colors, showLog) { showLog = !showLog }
             Spacer(Modifier.height(8.dp))
         }
@@ -264,7 +258,7 @@ private fun DuelBoardScreen(d: DuelUi, vm: AppViewModel, onOpen: (List<Long>, In
         }
     }
     // Cards flying between zones, drawn above the board.
-    MoveOverlay(d, vm, spots, canSee = { p -> reveal || p == d.human })
+    MoveOverlay(d, vm, spots, pending, canSee = { p -> reveal || p == d.human })
     }
 
     pile?.let { (title, cards) ->
@@ -291,67 +285,44 @@ private fun DuelBoardScreen(d: DuelUi, vm: AppViewModel, onOpen: (List<Long>, In
     }
 }
 
-private val SLOT_WIDTH: Dp = 50.dp
-
 @Composable
-private fun PlayerBar(
-    name: String,
-    p: PlayerState,
-    player: Int,
-    color: Color,
-    spots: BoardSpots,
-    active: Boolean,
-    onPile: (String, List<DuelCard>) -> Unit,
-) {
+private fun PlayerBar(name: String, p: PlayerState, color: Color, active: Boolean) {
     Row(
         Modifier.fillMaxWidth().padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(10.dp).clip(RoundedCornerShape(5.dp)).background(color))
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    name + if (active) " · turn" else "", fontWeight = if (active) FontWeight.Bold else FontWeight.Medium, maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = color,
-                )
-            }
-            Text(
-                "LP ${p.lp}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
-                color = if (p.lp <= 2000) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-            )
-        }
-        PileChip("Deck", p.deckCount, spots.at("deck/$player")) {}
-        PileChip("Extra", p.extra.size, spots.at("extra/$player")) { onPile("$name · Extra Deck", p.extra) }
-        PileChip("GY", p.graveyard.size, spots.at("gy/$player")) { onPile("$name · GY", p.graveyard) }
-        PileChip("Ban", p.banished.size, spots.at("ban/$player")) { onPile("$name · banished", p.banished) }
+        Box(Modifier.size(10.dp).clip(RoundedCornerShape(5.dp)).background(color))
+        Text(
+            name + if (active) " · turn" else "", fontWeight = if (active) FontWeight.Bold else FontWeight.Medium, maxLines = 1,
+            overflow = TextOverflow.Ellipsis, color = color, modifier = Modifier.weight(1f),
+        )
+        Text(
+            "LP ${p.lp}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+            color = if (p.lp <= 2000) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+        )
     }
 }
 
 @Composable
-private fun PileChip(label: String, count: Int, spot: Modifier, onClick: () -> Unit) {
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceContainerHighest,
-        shape = RoundedCornerShape(8.dp),
-        modifier = spot.clickable(onClick = onClick),
-    ) {
-        Column(Modifier.padding(horizontal = 7.dp, vertical = 3.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("$count", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge)
-            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-}
-
-@Composable
-private fun HandRow(vm: AppViewModel, hand: List<DuelCard>, player: Int, spots: BoardSpots, faceUp: Boolean, onOpen: (List<Long>, Int) -> Unit) {
+private fun HandRow(
+    vm: AppViewModel,
+    hand: List<DuelCard>,
+    player: Int,
+    spots: BoardSpots,
+    pending: Pending,
+    faceUp: Boolean,
+    onOpen: (List<Long>, Int) -> Unit,
+) {
     LazyRow(
         modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp).then(spots.at("hand/$player")),
-        horizontalArrangement = Arrangement.spacedBy(4.dp), contentPadding = PaddingValues(vertical = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
+        contentPadding = PaddingValues(vertical = 2.dp),
     ) {
         itemsIndexed(hand) { i, c ->
-            Box(spots.at("hc/$player/$i")) {
+            val key = "hc/$player/$i"
+            // A card still flying into the hand keeps its space but isn't drawn yet.
+            Box(spots.at(key).graphicsLayer { alpha = if (pending.has(key)) 0f else 1f }) {
                 if (faceUp) CardThumbnail(vm, c.code, width = 42) { onOpen(hand.map { it.code }, i) }
                 else CardBack(42.dp)
             }
@@ -368,92 +339,209 @@ private fun CardBack(width: Dp) {
     )
 }
 
+/**
+ * The playmat, as in Master Rule: for each player a Monster row (Field Zone, 5 Monster Zones, GY)
+ * and a back row (Extra Deck, 5 Spell & Trap Zones, Deck), with the 2 shared Extra Monster Zones
+ * in the middle and each player's banished pile beside their GY. The top player is mirrored.
+ */
 @Composable
-private fun ZoneRow(
+private fun Mat(
     vm: AppViewModel,
-    zones: List<ZoneCard?>,
-    seqs: List<Int>,
-    side: ZoneCard?,
-    player: Int,
-    kind: Char,
+    s: DuelState,
+    bottom: Int,
     spots: BoardSpots,
+    pending: Pending,
     reveal: Boolean,
-    opponent: Boolean,
     onOpen: (List<Long>, Int) -> Unit,
+    onPile: (String, List<DuelCard>) -> Unit,
+    names: List<String>,
 ) {
-    Row(
-        Modifier.fillMaxWidth().padding(vertical = 2.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        // The side slot of the Spell & Trap row is the Field Zone (slot 5).
-        val sideSpot = if (kind == 's') spots.at("s/$player/5") else Modifier
-        val sideSlot: @Composable () -> Unit = { Slot(vm, side, reveal, onOpen, faint = true, spot = sideSpot) }
-        if (opponent) sideSlot() else Box(Modifier.width(SLOT_WIDTH))
-        zones.forEachIndexed { i, z -> Slot(vm, z, reveal, onOpen, spot = spots.at("$kind/$player/${seqs[i]}")) }
-        if (!opponent) sideSlot() else Box(Modifier.width(SLOT_WIDTH))
-    }
-}
-
-@Composable
-private fun ExtraZones(vm: AppViewModel, s: DuelState, bottom: Int, spots: BoardSpots, reveal: Boolean, onOpen: (List<Long>, Int) -> Unit) {
-    // Extra Monster Zones (5 and 6) are shared: show whichever player occupies each.
     val top = 1 - bottom
-    val left = s.players[bottom].monsters.getOrNull(5) ?: s.players[top].monsters.getOrNull(6)
-    val right = s.players[bottom].monsters.getOrNull(6) ?: s.players[top].monsters.getOrNull(5)
-    Row(
-        Modifier.fillMaxWidth().padding(vertical = 2.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
-    ) {
-        Box(Modifier.width(SLOT_WIDTH))
-        Box(Modifier.width(SLOT_WIDTH))
-        Slot(vm, left, reveal, onOpen, faint = true, spot = spots.at("m/$bottom/5", "m/$top/6"))
-        Box(Modifier.width(SLOT_WIDTH))
-        Slot(vm, right, reveal, onOpen, faint = true, spot = spots.at("m/$bottom/6", "m/$top/5"))
-        Box(Modifier.width(SLOT_WIDTH))
-        Box(Modifier.width(SLOT_WIDTH))
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val gap = 3.dp
+        val slot = ((maxWidth - gap * 6) / 7).coerceAtMost(58.dp)
+        spots.slotWidth = slot
+        val ctx = MatCtx(vm, s, spots, pending, reveal, slot, onOpen, onPile, names)
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(gap), horizontalAlignment = Alignment.CenterHorizontally) {
+            // Top player, seen from across the table.
+            MatRow(gap) {
+                ctx.Pile(top, PileKind.DECK)
+                for (seq in 4 downTo 0) ctx.Zone(top, 's', seq, faceUpOnly = false)
+                ctx.Pile(top, PileKind.EXTRA)
+            }
+            MatRow(gap) {
+                ctx.Pile(top, PileKind.GY)
+                for (seq in 4 downTo 0) ctx.Zone(top, 'm', seq)
+                ctx.Zone(top, 's', 5, label = "Field")
+            }
+            // Middle: banished piles and the shared Extra Monster Zones.
+            MatRow(gap) {
+                ctx.Pile(top, PileKind.BANISHED)
+                Box(Modifier.width(slot))
+                ctx.ExtraMonsterZone(left = true, bottom = bottom)
+                Box(Modifier.width(slot))
+                ctx.ExtraMonsterZone(left = false, bottom = bottom)
+                Box(Modifier.width(slot))
+                ctx.Pile(bottom, PileKind.BANISHED)
+            }
+            // Bottom player.
+            MatRow(gap) {
+                ctx.Zone(bottom, 's', 5, label = "Field")
+                for (seq in 0..4) ctx.Zone(bottom, 'm', seq)
+                ctx.Pile(bottom, PileKind.GY)
+            }
+            MatRow(gap) {
+                ctx.Pile(bottom, PileKind.EXTRA)
+                for (seq in 0..4) ctx.Zone(bottom, 's', seq, faceUpOnly = false)
+                ctx.Pile(bottom, PileKind.DECK)
+            }
+        }
     }
 }
 
 @Composable
-private fun Slot(
+private fun MatRow(gap: Dp, content: @Composable () -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(gap), verticalAlignment = Alignment.CenterVertically) { content() }
+}
+
+private enum class PileKind(val label: String, val key: String) {
+    DECK("Deck", "deck"), EXTRA("Extra", "extra"), GY("GY", "gy"), BANISHED("Banished", "ban"),
+}
+
+/** Everything a mat slot needs, so the layout above stays readable. */
+private class MatCtx(
+    val vm: AppViewModel,
+    val s: DuelState,
+    val spots: BoardSpots,
+    val pending: Pending,
+    val reveal: Boolean,
+    val slot: Dp,
+    val onOpen: (List<Long>, Int) -> Unit,
+    val onPile: (String, List<DuelCard>) -> Unit,
+    val names: List<String>,
+) {
+    fun card(player: Int, kind: Char, seq: Int): ZoneCard? {
+        val p = s.players[player]
+        return if (kind == 'm') p.monsters.getOrNull(seq)
+        // Pendulum Zones (6, 7) are shown on the outer Spell & Trap Zones.
+        else p.spells.getOrNull(seq) ?: when (seq) { 0 -> p.spells.getOrNull(6); 4 -> p.spells.getOrNull(7); else -> null }
+    }
+
+    @Composable
+    fun Zone(player: Int, kind: Char, seq: Int, label: String? = null, faceUpOnly: Boolean = true) {
+        val key = "$kind/$player/$seq"
+        val c = if (pending.has(key)) null else card(player, kind, seq)
+        ZoneSlot(vm, c, slot, reveal, label, spots.at(key), onOpen)
+    }
+
+    @Composable
+    fun ExtraMonsterZone(left: Boolean, bottom: Int) {
+        // Zone 5 is the bottom player's left EMZ and the top player's right one (and 6 the other way round).
+        val top = 1 - bottom
+        val mine = if (left) 5 else 6
+        val theirs = if (left) 6 else 5
+        val keys = arrayOf("m/$bottom/$mine", "m/$top/$theirs")
+        val c = when {
+            keys.any { pending.has(it) } -> null
+            else -> s.players[bottom].monsters.getOrNull(mine) ?: s.players[top].monsters.getOrNull(theirs)
+        }
+        ZoneSlot(vm, c, slot, reveal, "EMZ", spots.at(*keys), onOpen)
+    }
+
+    @Composable
+    fun Pile(player: Int, kind: PileKind) {
+        val p = s.players[player]
+        val key = "${kind.key}/$player"
+        val waiting = pending.count(key)
+        val cards = when (kind) {
+            PileKind.EXTRA -> p.extra
+            PileKind.GY -> p.graveyard
+            PileKind.BANISHED -> p.banished
+            PileKind.DECK -> emptyList()
+        }
+        val total = if (kind == PileKind.DECK) p.deckCount else cards.size
+        // Cards still flying here aren't counted yet; the pile shows what was on top before them.
+        val count = (total - waiting).coerceAtLeast(0)
+        val visible = cards.dropLast(waiting.coerceAtMost(cards.size))
+        val topCard = if (kind == PileKind.GY || kind == PileKind.BANISHED) visible.lastOrNull() else null
+        Box(
+            spots.at(key).width(slot).aspectRatio(0.73f)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
+                .clickable(enabled = kind != PileKind.DECK) { onPile("${names[player]} · ${kind.label}", visible.reversed()) },
+            contentAlignment = Alignment.Center,
+        ) {
+            when {
+                count == 0 -> SlotLabel(kind.label)
+                topCard != null -> AsyncImage(
+                    model = vm.db.find(topCard.code)?.imageUrl(small = true)
+                        ?: "https://images.ygoprodeck.com/images/cards_small/${topCard.code}.jpg",
+                    contentDescription = topCard.name,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.width(slot - 8.dp).aspectRatio(0.686f).clip(RoundedCornerShape(2.dp)),
+                )
+                else -> CardBack(slot - 8.dp)
+            }
+            if (count > 0) Text(
+                "$count",
+                fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 2.dp)
+                    .background(Color(0xCC000000), RoundedCornerShape(3.dp)).padding(horizontal = 4.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SlotLabel(text: String) {
+    Text(
+        text, fontSize = 8.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+        textAlign = TextAlign.Center, maxLines = 1,
+    )
+}
+
+@Composable
+private fun ZoneSlot(
     vm: AppViewModel,
     c: ZoneCard?,
+    slot: Dp,
     reveal: Boolean,
+    label: String?,
+    spot: Modifier,
     onOpen: (List<Long>, Int) -> Unit,
-    faint: Boolean = false,
-    spot: Modifier = Modifier,
 ) {
     Box(
-        spot.width(SLOT_WIDTH).aspectRatio(0.73f)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (faint) 0.4f else 0.8f), RoundedCornerShape(4.dp)),
+        spot.width(slot).aspectRatio(0.73f)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (label != null) 0.45f else 0.8f), RoundedCornerShape(4.dp)),
         contentAlignment = Alignment.Center,
     ) {
-        if (c != null) {
-            val defense = c.isMonster && c.position != "atk"
-            val canSee = !c.faceDown || reveal
-            Box(Modifier.rotate(if (defense) 90f else 0f).padding(2.dp)) {
-                if (canSee) {
-                    AsyncImage(
-                        model = vm.db.find(c.code)?.imageUrl(small = true) ?: "https://images.ygoprodeck.com/images/cards_small/${c.code}.jpg",
-                        contentDescription = c.name,
-                        contentScale = ContentScale.Crop,
-                        alpha = if (c.faceDown) 0.55f else 1f,
-                        modifier = Modifier.width(SLOT_WIDTH - 12.dp).aspectRatio(0.686f).clip(RoundedCornerShape(2.dp))
-                            .clickable { onOpen(listOf(c.code), 0) },
-                    )
-                } else {
-                    CardBack(SLOT_WIDTH - 12.dp)
-                }
-            }
-            if (c.isMonster && !c.faceDown) {
-                Text(
-                    "${c.atk}" + if (c.materials > 0) " ·${c.materials}" else "",
-                    fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White, textAlign = TextAlign.Center,
-                    modifier = Modifier.align(Alignment.BottomCenter).background(Color(0xAA000000), RoundedCornerShape(2.dp))
-                        .padding(horizontal = 2.dp),
+        if (c == null) {
+            if (label != null) SlotLabel(label)
+            return@Box
+        }
+        val defense = c.isMonster && c.position != "atk"
+        val canSee = !c.faceDown || reveal
+        Box(Modifier.rotate(if (defense) 90f else 0f).padding(2.dp)) {
+            if (canSee) {
+                AsyncImage(
+                    model = vm.db.find(c.code)?.imageUrl(small = true) ?: "https://images.ygoprodeck.com/images/cards_small/${c.code}.jpg",
+                    contentDescription = c.name,
+                    contentScale = ContentScale.Crop,
+                    alpha = if (c.faceDown) 0.55f else 1f,
+                    modifier = Modifier.width(slot - 10.dp).aspectRatio(0.686f).clip(RoundedCornerShape(2.dp))
+                        .clickable { onOpen(listOf(c.code), 0) },
                 )
+            } else {
+                CardBack(slot - 10.dp)
             }
+        }
+        if (c.isMonster && !c.faceDown) {
+            Text(
+                (if (defense) "${c.def}" else "${c.atk}") + if (c.materials > 0) " ·${c.materials}" else "",
+                fontSize = 9.sp, fontWeight = FontWeight.Bold,
+                color = if (defense) Color(0xFF90CAF9) else Color.White, textAlign = TextAlign.Center,
+                modifier = Modifier.align(Alignment.BottomCenter).background(Color(0xAA000000), RoundedCornerShape(2.dp))
+                    .padding(horizontal = 2.dp),
+            )
         }
     }
 }
@@ -595,9 +683,28 @@ private fun playerColors(bottom: Int): PlayerColors =
 
 // ---------------- Card movement animation ----------------
 
+/** Key of a place on the board, as used by [BoardSpots] and [Pending]; null for Xyz materials. */
+private fun placeKey(p: DuelPlace): String? {
+    val loc = p.location
+    return when {
+        loc and DuelPlace.MATERIAL != 0 -> null
+        loc and DuelPlace.MONSTER_ZONE != 0 -> "m/${p.player}/${p.sequence}"
+        // Pendulum Zones (6, 7) sit on the outer Spell & Trap Zones.
+        loc and DuelPlace.SPELL_ZONE != 0 -> "s/${p.player}/${when (p.sequence) { 6 -> 0; 7 -> 4; else -> p.sequence }}"
+        loc and DuelPlace.HAND != 0 -> "hc/${p.player}/${p.sequence}"
+        loc and DuelPlace.DECK != 0 -> "deck/${p.player}"
+        loc and DuelPlace.EXTRA != 0 -> "extra/${p.player}"
+        loc and DuelPlace.GRAVEYARD != 0 -> "gy/${p.player}"
+        loc and DuelPlace.BANISHED != 0 -> "ban/${p.player}"
+        else -> null
+    }
+}
+
 /** Where each zone, pile and hand card is on screen, so moving cards know where to fly. */
 class BoardSpots {
     private val rects = HashMap<String, Rect>()
+    /** Width of a mat slot, so flying cards are the size of the cards on the field. */
+    var slotWidth: Dp = 46.dp
 
     /** Remembers this element's place under [keys] (one element can stand for several places). */
     fun at(vararg keys: String): Modifier = Modifier.onGloballyPositioned { c ->
@@ -606,47 +713,89 @@ class BoardSpots {
     }
 
     fun find(p: DuelPlace): Rect? {
-        val loc = p.location
-        return when {
-            loc and (DuelPlace.MONSTER_ZONE or DuelPlace.MATERIAL) != 0 -> rects["m/${p.player}/${p.sequence}"]
-            loc and DuelPlace.SPELL_ZONE != 0 -> {
-                // Pendulum Zones (6, 7) sit on the outer Spell & Trap Zones.
-                val seq = when (p.sequence) { 6 -> 0; 7 -> 4; else -> p.sequence }
-                rects["s/${p.player}/$seq"]
-            }
-            loc and DuelPlace.HAND != 0 -> rects["hc/${p.player}/${p.sequence}"]?.takeIf { it.width > 0f } ?: rects["hand/${p.player}"]
-            loc and DuelPlace.DECK != 0 -> rects["deck/${p.player}"]
-            loc and DuelPlace.EXTRA != 0 -> rects["extra/${p.player}"]
-            loc and DuelPlace.GRAVEYARD != 0 -> rects["gy/${p.player}"]
-            loc and DuelPlace.BANISHED != 0 -> rects["ban/${p.player}"]
-            else -> null
+        // Xyz materials fly to the monster they're attached to.
+        if (p.location and DuelPlace.MATERIAL != 0) return rects["m/${p.player}/${p.sequence}"]
+        val key = placeKey(p) ?: return null
+        if (p.location and DuelPlace.HAND != 0) return rects[key]?.takeIf { it.width > 0f } ?: rects["hand/${p.player}"]
+        return rects[key]
+    }
+}
+
+/** One planned flight: the move, and whether its destination waits for it (see [Pending]). */
+private class Plan(val move: DuelMove, val waitKey: String?)
+
+/**
+ * Moves of the latest update that will be animated. A destination waits (shows its old look) only
+ * if the card is still there at the end of the update — not if a later move takes it away again.
+ */
+private fun plan(moves: List<DuelMove>): List<Plan> {
+    val shown = moves.takeLast(MAX_FLIGHTS)
+    return shown.mapIndexed { i, m ->
+        val to = placeKey(m.to)
+        val leavesAgain = to != null && shown.drop(i + 1).any { placeKey(it.from) == to }
+        Plan(m, if (leavesAgain) null else to)
+    }
+}
+
+/** Places with cards still flying in, and how many. Read by the board, emptied as cards land. */
+class Pending private constructor(private val counts: androidx.compose.runtime.snapshots.SnapshotStateMap<String, Int>) {
+    fun has(key: String) = (counts[key] ?: 0) > 0
+    fun count(key: String) = counts[key] ?: 0
+    fun land(key: String?) {
+        if (key == null) return
+        val n = (counts[key] ?: 0) - 1
+        if (n <= 0) counts.remove(key) else counts[key] = n
+    }
+
+    companion object {
+        fun of(moves: List<DuelMove>): Pending {
+            val map = androidx.compose.runtime.mutableStateMapOf<String, Int>()
+            plan(moves).forEach { p -> p.waitKey?.let { map[it] = (map[it] ?: 0) + 1 } }
+            return Pending(map)
         }
     }
 }
 
-private class Flight(val id: Long, val code: Long, val showBack: Boolean, val from: Rect, val to: Rect, val delayMs: Long)
+private class Flight(
+    val id: Long,
+    val code: Long,
+    val showBack: Boolean,
+    val from: Rect,
+    val to: Rect,
+    val delayMs: Long,
+    val waitKey: String?,
+)
 
 /** Draws the cards that moved in the latest update flying from their old place to their new one. */
 @Composable
-private fun MoveOverlay(d: DuelUi, vm: AppViewModel, spots: BoardSpots, canSee: (Int) -> Boolean) {
+private fun MoveOverlay(d: DuelUi, vm: AppViewModel, spots: BoardSpots, pending: Pending, canSee: (Int) -> Boolean) {
     val flights = remember { mutableStateListOf<Flight>() }
     var origin by remember { mutableStateOf(Offset.Zero) }
     var nextId by remember { mutableStateOf(0L) }
     LaunchedEffect(d.moveBatch) {
+        flights.clear()
         if (d.moveBatch == 0) return@LaunchedEffect
         // Let the new board lay out first, so every place has its current position.
         delay(16)
-        // A long combo in one update: animate the last moves only, a little apart.
-        d.moves.takeLast(MAX_FLIGHTS).forEachIndexed { i, m ->
-            val from = spots.find(m.from) ?: return@forEachIndexed
-            val to = spots.find(m.to) ?: return@forEachIndexed
-            if (from == to) return@forEachIndexed
-            flights += Flight(nextId++, m.code, hidden(m, canSee), from, to, i * STAGGER_MS)
+        plan(d.moves).forEachIndexed { i, p ->
+            val from = spots.find(p.move.from)
+            val to = spots.find(p.move.to)
+            if (from == null || to == null || from == to) {
+                pending.land(p.waitKey) // nothing to animate: show the card right away
+                return@forEachIndexed
+            }
+            flights += Flight(nextId++, p.move.code, hidden(p.move, canSee), from, to, i * STAGGER_MS, p.waitKey)
         }
     }
+    val width = spots.slotWidth - 8.dp
     Box(Modifier.fillMaxSize().onGloballyPositioned { origin = it.positionInRoot() }) {
         flights.toList().forEach { f ->
-            key(f.id) { FlyingCard(f, origin, vm) { flights.remove(f) } }
+            key(f.id) {
+                FlyingCard(f, origin, width, vm) {
+                    pending.land(f.waitKey)
+                    flights.remove(f)
+                }
+            }
         }
     }
 }
@@ -668,7 +817,7 @@ private fun hidden(m: DuelMove, canSee: (Int) -> Boolean): Boolean {
 }
 
 @Composable
-private fun FlyingCard(f: Flight, origin: Offset, vm: AppViewModel, onDone: () -> Unit) {
+private fun FlyingCard(f: Flight, origin: Offset, width: Dp, vm: AppViewModel, onDone: () -> Unit) {
     val progress = remember { Animatable(0f) }
     var started by remember { mutableStateOf(false) }
     LaunchedEffect(f.id) {
@@ -680,7 +829,6 @@ private fun FlyingCard(f: Flight, origin: Offset, vm: AppViewModel, onDone: () -
     if (!started) return
     val t = progress.value
     val center = androidx.compose.ui.geometry.lerp(f.from.center, f.to.center, t) - origin
-    val width = 40.dp
     val height = width / 0.686f
     Box(
         Modifier
@@ -697,7 +845,6 @@ private fun FlyingCard(f: Flight, origin: Offset, vm: AppViewModel, onDone: () -
                 scaleX = lift
                 scaleY = lift
                 shadowElevation = 12f * sin(PI * t).toFloat()
-                alpha = if (t > 0.92f) (1f - t) / 0.08f else 1f
             },
     ) {
         if (f.showBack) {

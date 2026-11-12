@@ -78,6 +78,27 @@ import com.ygosandbox.app.model.GameFormat
 import com.ygosandbox.app.play.DuelMode
 import com.ygosandbox.app.play.DuelUi
 import com.ygosandbox.app.play.FirstPlayer
+import com.ygosandbox.app.play.LogEntry
+import com.ygoengine.DuelMove
+import com.ygoengine.DuelPlace
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.offset
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.unit.IntOffset
+import kotlinx.coroutines.delay
+import kotlin.math.PI
+import kotlin.math.roundToInt
+import kotlin.math.sin
 
 @Composable
 fun DuelScreen(ui: UiState, vm: AppViewModel) {
@@ -185,7 +206,10 @@ private fun DuelBoardScreen(d: DuelUi, vm: AppViewModel, onOpen: (List<Long>, In
     val reveal = d.human < 0 && d.setup.reveal
     var pile by remember { mutableStateOf<Pair<String, List<DuelCard>>?>(null) }
     var showLog by remember { mutableStateOf(false) }
+    val spots = remember { BoardSpots() }
+    val colors = playerColors(d.bottom)
 
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         Header(if (s == null) "Duel" else "Turn ${s.turn} · ${s.phase}", onBack = { vm.back() }) {
             if (d.human < 0 || s?.decision?.player != d.human) {
@@ -206,19 +230,23 @@ private fun DuelBoardScreen(d: DuelUi, vm: AppViewModel, onOpen: (List<Long>, In
         }
 
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 8.dp)) {
-            PlayerBar(d.names[top], s.players[top], active = s.turnPlayer == top, onPile = { t, l -> pile = t to l })
-            HandRow(vm, s.players[top].hand, faceUp = reveal, onOpen)
+            PlayerBar(d.names[top], s.players[top], top, colors.of(top), spots, active = s.turnPlayer == top, onPile = { t, l -> pile = t to l })
+            HandRow(vm, s.players[top].hand, top, spots, faceUp = reveal, onOpen)
             Spacer(Modifier.height(4.dp))
             // Opponent's zones are mirrored: their zone 0 is on our right.
-            ZoneRow(vm, s.players[top].spells.take(5).reversed(), side = s.players[top].spells.getOrNull(5), reveal, opponent = true, onOpen)
-            ZoneRow(vm, s.players[top].monsters.take(5).reversed(), side = null, reveal, opponent = true, onOpen)
-            ExtraZones(vm, s, d.bottom, reveal, onOpen)
-            ZoneRow(vm, s.players[d.bottom].monsters.take(5), side = null, reveal = true, opponent = false, onOpen)
-            ZoneRow(vm, s.players[d.bottom].spells.take(5), side = s.players[d.bottom].spells.getOrNull(5), reveal = true, opponent = false, onOpen)
+            ZoneRow(vm, s.players[top].spells.take(5).reversed(), listOf(4, 3, 2, 1, 0), side = s.players[top].spells.getOrNull(5),
+                top, 's', spots, reveal, opponent = true, onOpen)
+            ZoneRow(vm, s.players[top].monsters.take(5).reversed(), listOf(4, 3, 2, 1, 0), side = null,
+                top, 'm', spots, reveal, opponent = true, onOpen)
+            ExtraZones(vm, s, d.bottom, spots, reveal, onOpen)
+            ZoneRow(vm, s.players[d.bottom].monsters.take(5), listOf(0, 1, 2, 3, 4), side = null,
+                d.bottom, 'm', spots, reveal = true, opponent = false, onOpen)
+            ZoneRow(vm, s.players[d.bottom].spells.take(5), listOf(0, 1, 2, 3, 4), side = s.players[d.bottom].spells.getOrNull(5),
+                d.bottom, 's', spots, reveal = true, opponent = false, onOpen)
             Spacer(Modifier.height(4.dp))
-            HandRow(vm, s.players[d.bottom].hand, faceUp = d.human >= 0 || reveal, onOpen)
-            PlayerBar(d.names[d.bottom], s.players[d.bottom], active = s.turnPlayer == d.bottom, onPile = { t, l -> pile = t to l })
-            LogPanel(d.log, showLog) { showLog = !showLog }
+            HandRow(vm, s.players[d.bottom].hand, d.bottom, spots, faceUp = d.human >= 0 || reveal, onOpen)
+            PlayerBar(d.names[d.bottom], s.players[d.bottom], d.bottom, colors.of(d.bottom), spots, active = s.turnPlayer == d.bottom, onPile = { t, l -> pile = t to l })
+            LogPanel(d.log, d.names, colors, showLog) { showLog = !showLog }
             Spacer(Modifier.height(8.dp))
         }
 
@@ -234,6 +262,9 @@ private fun DuelBoardScreen(d: DuelUi, vm: AppViewModel, onOpen: (List<Long>, In
                 }
             }
         }
+    }
+    // Cards flying between zones, drawn above the board.
+    MoveOverlay(d, vm, spots, canSee = { p -> reveal || p == d.human })
     }
 
     pile?.let { (title, cards) ->
@@ -263,36 +294,48 @@ private fun DuelBoardScreen(d: DuelUi, vm: AppViewModel, onOpen: (List<Long>, In
 private val SLOT_WIDTH: Dp = 50.dp
 
 @Composable
-private fun PlayerBar(name: String, p: PlayerState, active: Boolean, onPile: (String, List<DuelCard>) -> Unit) {
+private fun PlayerBar(
+    name: String,
+    p: PlayerState,
+    player: Int,
+    color: Color,
+    spots: BoardSpots,
+    active: Boolean,
+    onPile: (String, List<DuelCard>) -> Unit,
+) {
     Row(
         Modifier.fillMaxWidth().padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Column(Modifier.weight(1f)) {
-            Text(
-                name, fontWeight = if (active) FontWeight.Bold else FontWeight.Medium, maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(10.dp).clip(RoundedCornerShape(5.dp)).background(color))
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    name + if (active) " · turn" else "", fontWeight = if (active) FontWeight.Bold else FontWeight.Medium, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = color,
+                )
+            }
             Text(
                 "LP ${p.lp}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
                 color = if (p.lp <= 2000) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
             )
         }
-        PileChip("Deck", p.deckCount) {}
-        PileChip("Extra", p.extra.size) { onPile("$name · Extra Deck", p.extra) }
-        PileChip("GY", p.graveyard.size) { onPile("$name · GY", p.graveyard) }
-        PileChip("Ban", p.banished.size) { onPile("$name · banished", p.banished) }
+        PileChip("Deck", p.deckCount, spots.at("deck/$player")) {}
+        PileChip("Extra", p.extra.size, spots.at("extra/$player")) { onPile("$name · Extra Deck", p.extra) }
+        PileChip("GY", p.graveyard.size, spots.at("gy/$player")) { onPile("$name · GY", p.graveyard) }
+        PileChip("Ban", p.banished.size, spots.at("ban/$player")) { onPile("$name · banished", p.banished) }
     }
 }
 
 @Composable
-private fun PileChip(label: String, count: Int, onClick: () -> Unit) {
+private fun PileChip(label: String, count: Int, spot: Modifier, onClick: () -> Unit) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerHighest,
         shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.clickable(onClick = onClick),
+        modifier = spot.clickable(onClick = onClick),
     ) {
         Column(Modifier.padding(horizontal = 7.dp, vertical = 3.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Text("$count", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge)
@@ -302,11 +345,16 @@ private fun PileChip(label: String, count: Int, onClick: () -> Unit) {
 }
 
 @Composable
-private fun HandRow(vm: AppViewModel, hand: List<DuelCard>, faceUp: Boolean, onOpen: (List<Long>, Int) -> Unit) {
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp), contentPadding = PaddingValues(vertical = 2.dp)) {
+private fun HandRow(vm: AppViewModel, hand: List<DuelCard>, player: Int, spots: BoardSpots, faceUp: Boolean, onOpen: (List<Long>, Int) -> Unit) {
+    LazyRow(
+        modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp).then(spots.at("hand/$player")),
+        horizontalArrangement = Arrangement.spacedBy(4.dp), contentPadding = PaddingValues(vertical = 2.dp),
+    ) {
         itemsIndexed(hand) { i, c ->
-            if (faceUp) CardThumbnail(vm, c.code, width = 42) { onOpen(hand.map { it.code }, i) }
-            else CardBack(42.dp)
+            Box(spots.at("hc/$player/$i")) {
+                if (faceUp) CardThumbnail(vm, c.code, width = 42) { onOpen(hand.map { it.code }, i) }
+                else CardBack(42.dp)
+            }
         }
     }
 }
@@ -324,7 +372,11 @@ private fun CardBack(width: Dp) {
 private fun ZoneRow(
     vm: AppViewModel,
     zones: List<ZoneCard?>,
+    seqs: List<Int>,
     side: ZoneCard?,
+    player: Int,
+    kind: Char,
+    spots: BoardSpots,
     reveal: Boolean,
     opponent: Boolean,
     onOpen: (List<Long>, Int) -> Unit,
@@ -334,15 +386,17 @@ private fun ZoneRow(
         horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        val sideSlot: @Composable () -> Unit = { Slot(vm, side, reveal, onOpen, faint = true) }
+        // The side slot of the Spell & Trap row is the Field Zone (slot 5).
+        val sideSpot = if (kind == 's') spots.at("s/$player/5") else Modifier
+        val sideSlot: @Composable () -> Unit = { Slot(vm, side, reveal, onOpen, faint = true, spot = sideSpot) }
         if (opponent) sideSlot() else Box(Modifier.width(SLOT_WIDTH))
-        zones.forEach { z -> Slot(vm, z, reveal, onOpen) }
+        zones.forEachIndexed { i, z -> Slot(vm, z, reveal, onOpen, spot = spots.at("$kind/$player/${seqs[i]}")) }
         if (!opponent) sideSlot() else Box(Modifier.width(SLOT_WIDTH))
     }
 }
 
 @Composable
-private fun ExtraZones(vm: AppViewModel, s: DuelState, bottom: Int, reveal: Boolean, onOpen: (List<Long>, Int) -> Unit) {
+private fun ExtraZones(vm: AppViewModel, s: DuelState, bottom: Int, spots: BoardSpots, reveal: Boolean, onOpen: (List<Long>, Int) -> Unit) {
     // Extra Monster Zones (5 and 6) are shared: show whichever player occupies each.
     val top = 1 - bottom
     val left = s.players[bottom].monsters.getOrNull(5) ?: s.players[top].monsters.getOrNull(6)
@@ -353,18 +407,25 @@ private fun ExtraZones(vm: AppViewModel, s: DuelState, bottom: Int, reveal: Bool
     ) {
         Box(Modifier.width(SLOT_WIDTH))
         Box(Modifier.width(SLOT_WIDTH))
-        Slot(vm, left, reveal, onOpen, faint = true)
+        Slot(vm, left, reveal, onOpen, faint = true, spot = spots.at("m/$bottom/5", "m/$top/6"))
         Box(Modifier.width(SLOT_WIDTH))
-        Slot(vm, right, reveal, onOpen, faint = true)
+        Slot(vm, right, reveal, onOpen, faint = true, spot = spots.at("m/$bottom/6", "m/$top/5"))
         Box(Modifier.width(SLOT_WIDTH))
         Box(Modifier.width(SLOT_WIDTH))
     }
 }
 
 @Composable
-private fun Slot(vm: AppViewModel, c: ZoneCard?, reveal: Boolean, onOpen: (List<Long>, Int) -> Unit, faint: Boolean = false) {
+private fun Slot(
+    vm: AppViewModel,
+    c: ZoneCard?,
+    reveal: Boolean,
+    onOpen: (List<Long>, Int) -> Unit,
+    faint: Boolean = false,
+    spot: Modifier = Modifier,
+) {
     Box(
-        Modifier.width(SLOT_WIDTH).aspectRatio(0.73f)
+        spot.width(SLOT_WIDTH).aspectRatio(0.73f)
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (faint) 0.4f else 0.8f), RoundedCornerShape(4.dp)),
         contentAlignment = Alignment.Center,
     ) {
@@ -398,7 +459,7 @@ private fun Slot(vm: AppViewModel, c: ZoneCard?, reveal: Boolean, onOpen: (List<
 }
 
 @Composable
-private fun LogPanel(log: List<String>, open: Boolean, onToggle: () -> Unit) {
+private fun LogPanel(log: List<LogEntry>, names: List<String>, colors: PlayerColors, open: Boolean, onToggle: () -> Unit) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(10.dp),
         modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
@@ -408,29 +469,56 @@ private fun LogPanel(log: List<String>, open: Boolean, onToggle: () -> Unit) {
                 Text("Duel log", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                 Text(if (open) "Show less" else "Show all", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
             }
+            // Which colour is which player.
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(vertical = 4.dp)) {
+                names.forEachIndexed { p, n ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(8.dp).clip(RoundedCornerShape(4.dp)).background(colors.of(p)))
+                        Spacer(Modifier.width(4.dp))
+                        Text(n, style = MaterialTheme.typography.labelSmall, color = colors.of(p), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
             val lines = if (open) log else log.takeLast(6)
             if (open) {
                 val state = rememberLazyListState()
                 LaunchedEffect(log.size) { if (log.isNotEmpty()) state.scrollToItem(log.size - 1) }
                 LazyColumn(Modifier.heightIn(max = 320.dp), state = state) {
-                    items(lines) { LogLine(it) }
+                    items(lines) { LogLine(it, colors) }
                 }
             } else {
-                lines.forEach { LogLine(it) }
+                lines.forEach { LogLine(it, colors) }
             }
         }
     }
 }
 
 @Composable
-private fun LogLine(line: String) {
+private fun LogLine(entry: LogEntry, colors: PlayerColors) {
+    val line = entry.text
     val turn = line.startsWith("—")
-    Text(
-        line,
-        style = MaterialTheme.typography.bodySmall,
-        fontWeight = if (turn) FontWeight.Bold else FontWeight.Normal,
-        color = if (line.startsWith("   ")) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
-    )
+    val detail = line.startsWith("   ")
+    // Phases have no actor of their own; show them neutral so player actions stand out.
+    val phase = line in PHASES
+    val color = when {
+        entry.player < 0 || phase -> MaterialTheme.colorScheme.onSurfaceVariant
+        detail -> colors.of(entry.player).copy(alpha = 0.75f)
+        else -> colors.of(entry.player)
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier.width(3.dp).height(14.dp)
+                .background(if (entry.player < 0 || phase) Color.Transparent else colors.of(entry.player).copy(alpha = if (detail) 0.4f else 1f)),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            line.trimStart(),
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = if (turn) FontWeight.Bold else FontWeight.Normal,
+            color = color,
+            modifier = if (detail) Modifier.padding(start = 10.dp) else Modifier,
+        )
+    }
 }
 
 @Composable
@@ -488,5 +576,140 @@ private fun GameOver(d: DuelUi, s: DuelState, vm: AppViewModel) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Button(onClick = { vm.startDuel() }) { Text("Rematch") }
         OutlinedButton(onClick = { vm.stopDuel() }) { Text("Change setup") }
+    }
+}
+
+private val PHASES = setOf("Draw Phase", "Standby Phase", "Main Phase 1", "Battle Phase", "Main Phase 2", "End Phase")
+
+// ---------------- Player colours ----------------
+
+/** Each player's colour in the log and on the board: blue for the bottom player, orange for the top. */
+class PlayerColors(private val bottom: Int, private val bottomColor: Color, private val topColor: Color) {
+    fun of(player: Int): Color = if (player == bottom) bottomColor else topColor
+}
+
+@Composable
+private fun playerColors(bottom: Int): PlayerColors =
+    if (isSystemInDarkTheme()) PlayerColors(bottom, Color(0xFF64B5F6), Color(0xFFFF8A65))
+    else PlayerColors(bottom, Color(0xFF1565C0), Color(0xFFD84315))
+
+// ---------------- Card movement animation ----------------
+
+/** Where each zone, pile and hand card is on screen, so moving cards know where to fly. */
+class BoardSpots {
+    private val rects = HashMap<String, Rect>()
+
+    /** Remembers this element's place under [keys] (one element can stand for several places). */
+    fun at(vararg keys: String): Modifier = Modifier.onGloballyPositioned { c ->
+        val r = c.boundsInRoot()
+        keys.forEach { rects[it] = r }
+    }
+
+    fun find(p: DuelPlace): Rect? {
+        val loc = p.location
+        return when {
+            loc and (DuelPlace.MONSTER_ZONE or DuelPlace.MATERIAL) != 0 -> rects["m/${p.player}/${p.sequence}"]
+            loc and DuelPlace.SPELL_ZONE != 0 -> {
+                // Pendulum Zones (6, 7) sit on the outer Spell & Trap Zones.
+                val seq = when (p.sequence) { 6 -> 0; 7 -> 4; else -> p.sequence }
+                rects["s/${p.player}/$seq"]
+            }
+            loc and DuelPlace.HAND != 0 -> rects["hc/${p.player}/${p.sequence}"]?.takeIf { it.width > 0f } ?: rects["hand/${p.player}"]
+            loc and DuelPlace.DECK != 0 -> rects["deck/${p.player}"]
+            loc and DuelPlace.EXTRA != 0 -> rects["extra/${p.player}"]
+            loc and DuelPlace.GRAVEYARD != 0 -> rects["gy/${p.player}"]
+            loc and DuelPlace.BANISHED != 0 -> rects["ban/${p.player}"]
+            else -> null
+        }
+    }
+}
+
+private class Flight(val id: Long, val code: Long, val showBack: Boolean, val from: Rect, val to: Rect, val delayMs: Long)
+
+/** Draws the cards that moved in the latest update flying from their old place to their new one. */
+@Composable
+private fun MoveOverlay(d: DuelUi, vm: AppViewModel, spots: BoardSpots, canSee: (Int) -> Boolean) {
+    val flights = remember { mutableStateListOf<Flight>() }
+    var origin by remember { mutableStateOf(Offset.Zero) }
+    var nextId by remember { mutableStateOf(0L) }
+    LaunchedEffect(d.moveBatch) {
+        if (d.moveBatch == 0) return@LaunchedEffect
+        // Let the new board lay out first, so every place has its current position.
+        delay(16)
+        // A long combo in one update: animate the last moves only, a little apart.
+        d.moves.takeLast(MAX_FLIGHTS).forEachIndexed { i, m ->
+            val from = spots.find(m.from) ?: return@forEachIndexed
+            val to = spots.find(m.to) ?: return@forEachIndexed
+            if (from == to) return@forEachIndexed
+            flights += Flight(nextId++, m.code, hidden(m, canSee), from, to, i * STAGGER_MS)
+        }
+    }
+    Box(Modifier.fillMaxSize().onGloballyPositioned { origin = it.positionInRoot() }) {
+        flights.toList().forEach { f ->
+            key(f.id) { FlyingCard(f, origin, vm) { flights.remove(f) } }
+        }
+    }
+}
+
+private const val MAX_FLIGHTS = 12
+private const val STAGGER_MS = 110L
+private const val FLIGHT_MS = 480
+
+/**
+ * Whether the moving card should be shown face-down: it lands face-down where the viewer can't
+ * see it, or it moves between hidden places (a hidden player's Deck and hand).
+ */
+private fun hidden(m: DuelMove, canSee: (Int) -> Boolean): Boolean {
+    if (m.code == 0L) return true
+    val field = DuelPlace.MONSTER_ZONE or DuelPlace.SPELL_ZONE
+    val secret = DuelPlace.DECK or DuelPlace.HAND
+    if (m.to.location and field != 0 && m.to.faceDown && !canSee(m.to.player)) return true
+    return m.from.location and secret != 0 && m.to.location and secret != 0 && !canSee(m.to.player)
+}
+
+@Composable
+private fun FlyingCard(f: Flight, origin: Offset, vm: AppViewModel, onDone: () -> Unit) {
+    val progress = remember { Animatable(0f) }
+    var started by remember { mutableStateOf(false) }
+    LaunchedEffect(f.id) {
+        delay(f.delayMs)
+        started = true
+        progress.animateTo(1f, tween(FLIGHT_MS, easing = FastOutSlowInEasing))
+        onDone()
+    }
+    if (!started) return
+    val t = progress.value
+    val center = androidx.compose.ui.geometry.lerp(f.from.center, f.to.center, t) - origin
+    val width = 40.dp
+    val height = width / 0.686f
+    Box(
+        Modifier
+            .offset {
+                IntOffset(
+                    (center.x - width.toPx() / 2).roundToInt(),
+                    (center.y - height.toPx() / 2).roundToInt(),
+                )
+            }
+            .size(width, height)
+            .graphicsLayer {
+                // Lift the card a little in the middle of its flight.
+                val lift = 1f + 0.18f * sin(PI * t).toFloat()
+                scaleX = lift
+                scaleY = lift
+                shadowElevation = 12f * sin(PI * t).toFloat()
+                alpha = if (t > 0.92f) (1f - t) / 0.08f else 1f
+            },
+    ) {
+        if (f.showBack) {
+            CardBack(width)
+        } else {
+            AsyncImage(
+                model = vm.db.find(f.code)?.imageUrl(small = true) ?: "https://images.ygoprodeck.com/images/cards_small/${f.code}.jpg",
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(3.dp))
+                    .border(1.dp, Color(0xFFB8860B), RoundedCornerShape(3.dp)),
+            )
+        }
     }
 }

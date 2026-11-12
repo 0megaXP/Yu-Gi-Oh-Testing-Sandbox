@@ -26,6 +26,7 @@ import com.ygosandbox.app.play.DeckChoice
 import com.ygosandbox.app.play.DuelMode
 import com.ygosandbox.app.play.DuelSetup
 import com.ygosandbox.app.play.DuelUi
+import com.ygosandbox.app.play.LogEntry
 import com.ygosandbox.app.play.FirstPlayer
 import com.ygoengine.LiveDuel
 import kotlinx.coroutines.CompletableDeferred
@@ -679,7 +680,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(
                 active = true, starting = true, state = null, bottom = bottom,
                 human = if (humanMode) bottom else -1, names = names, levels = levels,
-                log = listOf("${names[0]} goes first."), paused = false, thinking = false, error = null,
+                log = listOf(LogEntry(0, "${names[0]} goes first.")), moves = emptyList(), paused = false, thinking = false, error = null,
             )
         }
         duelJob = viewModelScope.launch {
@@ -703,8 +704,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun publishDuelState(duel: LiveDuel) {
         val s = duel.state()
         updateDuel { d ->
-            val lines = s.log.map { line -> line.replace("[P0]", d.names[0]).replace("[P1]", d.names[1]) }
-            d.copy(state = s, log = (d.log + lines).takeLast(600))
+            val lines = s.log.mapIndexed { i, line ->
+                LogEntry(s.logPlayers.getOrElse(i) { -1 }, line.replace("[P0]", d.names[0]).replace("[P1]", d.names[1]))
+            }
+            d.copy(
+                state = s,
+                log = (d.log + lines).takeLast(600),
+                moves = s.moves,
+                moveBatch = if (s.moves.isEmpty()) d.moveBatch else d.moveBatch + 1,
+            )
         }
     }
 

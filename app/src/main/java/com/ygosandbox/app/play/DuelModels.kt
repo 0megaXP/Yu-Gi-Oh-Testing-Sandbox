@@ -1,6 +1,7 @@
 package com.ygosandbox.app.play
 
 import com.ygoengine.BotLevel
+import com.ygoengine.DuelMove
 import com.ygoengine.DuelState
 
 enum class DuelMode(val label: String) { HUMAN_VS_BOT("You vs bot"), BOT_VS_BOT("Bot vs bot") }
@@ -21,6 +22,9 @@ data class DuelSetup(
     val reveal: Boolean = true,
 )
 
+/** One log line and the player it's about (engine index 0/1, or -1 for nobody). */
+data class LogEntry(val player: Int, val text: String)
+
 data class DuelUi(
     val setup: DuelSetup = DuelSetup(),
     /** A duel is on (or just finished) — show the board. */
@@ -34,7 +38,11 @@ data class DuelUi(
     val names: List<String> = listOf("Player 1", "Player 2"),
     val levels: List<BotLevel> = listOf(BotLevel.NORMAL, BotLevel.NORMAL),
     /** Whole game log, oldest first, with player names filled in. */
-    val log: List<String> = emptyList(),
+    val log: List<LogEntry> = emptyList(),
+    /** Cards that moved in the latest update, for the board animation. */
+    val moves: List<DuelMove> = emptyList(),
+    /** Goes up with every update that has moves, so the board knows to animate them. */
+    val moveBatch: Int = 0,
     val paused: Boolean = false,
     val thinking: Boolean = false,
     val error: String? = null,

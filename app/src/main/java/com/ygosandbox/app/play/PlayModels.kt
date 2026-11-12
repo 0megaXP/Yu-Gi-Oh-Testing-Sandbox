@@ -74,6 +74,11 @@ data class PlayState(
     val sideProgress: Progress? = null,
     val sideResult: SideResult? = null,
     val sideError: String? = null,
+    // Reference end boards
+    val refProgress: Progress? = null,
+    val refError: String? = null,
+    /** Bumped when a reference is saved, so screens re-read the store. */
+    val refRevision: Int = 0,
 )
 
 const val HAND_SIZE = 5

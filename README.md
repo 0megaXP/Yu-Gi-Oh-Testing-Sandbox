@@ -48,6 +48,11 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
   - **Practice** sees both hands; leave theirs empty for a random one per sample. **Real play** knows only your hand and samples theirs from their list.
   - The engine plays the real card rules (ygopro-core with the EDOPro scripts). It shows the top lines with their steps, the end board, what that board can stop against this opponent, and the opponent's strongest reply found when they play their turn against it.
   - Searches can be stopped early and keep what they found. Cards EDOPro can't play yet are listed.
+- **Reference end boards** (test): from a deck's Analysis page.
+  - The engine plays 12 (quick) or 30 (thorough) random opening hands going first, with no interaction from the opponent, and keeps the best board it finds for each.
+  - The screen shows the median and best board value, the typical end-board cards (share of boards with each card), and every board with its hand and line.
+  - Play engine lines then show where their board sits against these (e.g. "better than 80% of this deck's reference boards").
+  - Saved per card list (`refs/`), so editing the deck asks for a new reference.
 - **Side plan** (test): from a deck's Analysis page, pick an opponent deck to get what to side in and out, going first and going second, with the reason for each card. *Simulate their boards* first plays several of their opening turns and rates your board breakers against what they actually build.
 - **Duel simulator** (test): a full duel with the real card rules, in two modes: **You vs bot** or **Bot vs bot**.
   - Pick both decks, who goes first and the bot level:
@@ -112,6 +117,7 @@ app/src/main/java/com/ygosandbox/app/
   update/Updater.kt      in-app updater (GitHub releases)
   play/PlayModels.kt     Play engine / side plan state and deck choices
   play/DuelModels.kt     Duel simulator settings and state (game loop in AppViewModel)
+  data/ReferenceStore.kt saved reference end boards, one file per card list
   ui/                    Jetpack Compose screens (Play engine + side plan: ui/PlayScreens.kt, duel: ui/DuelScreen.kt)
 engine/                  the play engine (submodule, Gradle module :ygoe)
 ```

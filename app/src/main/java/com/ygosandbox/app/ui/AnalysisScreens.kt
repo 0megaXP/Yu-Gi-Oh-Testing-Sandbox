@@ -189,6 +189,9 @@ fun AnalysisDeckScreen(ui: UiState, vm: AppViewModel, id: String) {
                         OutlinedButton(onClick = { vm.open(Screen.SidePlan(deck.id)) }, modifier = Modifier.fillMaxWidth()) {
                             Text("Side plan against another deck")
                         }
+                        OutlinedButton(onClick = { vm.open(Screen.Reference("my:${deck.id}")) }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Reference end boards")
+                        }
 
                         SectionTitle("Playable cards")
                         Text("Count as playable:", style = MaterialTheme.typography.bodySmall)

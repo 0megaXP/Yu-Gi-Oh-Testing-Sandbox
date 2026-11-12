@@ -57,6 +57,8 @@ sealed interface Screen {
     data object Play : Screen
     data class SidePlan(val deckId: String) : Screen
     data object Duel : Screen
+    /** Reference end boards for a deck choice key ("my:<id>" or "src:<search>:<index>"). */
+    data class Reference(val deckKey: String) : Screen
     data object Settings : Screen
 }
 
@@ -550,6 +552,43 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { it.copy(play = it.play.copy(sideProgress = null)) }
             }
         }
+    }
+
+    // ---------- Reference end boards ----------
+
+    val references = com.ygosandbox.app.data.ReferenceStore(app)
+    private var refJob: Job? = null
+
+    fun referenceFor(choice: DeckChoice?): com.ygoengine.ReferenceResult? =
+        choice?.let { references.load(references.signature(it.main, it.extra)) }
+
+    fun buildReference(deckKey: String, thorough: Boolean) {
+        if (refJob?.isActive == true) return
+        val choice = deckChoice(deckKey) ?: return
+        refJob = viewModelScope.launch {
+            _ui.update { it.copy(play = it.play.copy(refError = null, refProgress = com.ygoengine.Progress("starting", 0, 0))) }
+            try {
+                val result = engine().reference(
+                    choice.toEngine(),
+                    hands = if (thorough) 30 else 12,
+                    iterations = if (thorough) 2000 else 1000,
+                    seed = System.currentTimeMillis(),
+                ) { p -> _ui.update { it.copy(play = it.play.copy(refProgress = p)) } }
+                if (result.samples.isNotEmpty()) references.save(references.signature(choice.main, choice.extra), result)
+                else _ui.update { it.copy(play = it.play.copy(refError = "Stopped before the first hand finished")) }
+                _ui.update { it.copy(play = it.play.copy(refRevision = it.play.refRevision + 1)) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _ui.update { it.copy(play = it.play.copy(refError = "The engine failed: ${e.message ?: e.toString()}")) }
+            } finally {
+                _ui.update { it.copy(play = it.play.copy(refProgress = null)) }
+            }
+        }
+    }
+
+    fun stopReference() {
+        engine?.cancel()
     }
 
     fun stopSidePlan() {

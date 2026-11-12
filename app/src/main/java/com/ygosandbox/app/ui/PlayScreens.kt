@@ -131,6 +131,7 @@ fun EngineProgress(p: Progress, preparing: Boolean, onStop: () -> Unit) {
                 p.phase == "search" -> "Searching your turn… ${p.done} / ${p.total}"
                 p.phase.startsWith("verify") -> "Playing their turn against line ${p.phase.removePrefix("verify ")}…"
                 p.phase == "simulate" -> "Simulating their opening turns… ${p.done} / ${p.total}"
+                p.phase == "reference" -> "Building reference boards… hand ${(p.done + 1).coerceAtMost(p.total)} of ${p.total}"
                 else -> "Starting…"
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -242,7 +243,12 @@ fun PlayScreen(ui: UiState, vm: AppViewModel) {
                 }
                 val result = play.result
                 if (result != null && !running) {
-                    resultItems(this, vm, result, play.resultSetup?.goingFirst ?: true) { codes, i -> pager = codes to i }
+                    val resultDeck = choices.firstOrNull { it.key == play.resultSetup?.myDeck }
+                    val reference = vm.referenceFor(resultDeck)
+                    resultItems(
+                        this, vm, result, play.resultSetup?.goingFirst ?: true, reference,
+                        onReference = resultDeck?.let { d -> { vm.open(com.ygosandbox.app.Screen.Reference(d.key)) } },
+                    ) { codes, i -> pager = codes to i }
                 }
             }
         }
@@ -352,6 +358,8 @@ private fun resultItems(
     vm: AppViewModel,
     r: AnalysisResult,
     goingFirst: Boolean,
+    reference: com.ygoengine.ReferenceResult?,
+    onReference: (() -> Unit)?,
     onOpen: (List<Long>, Int) -> Unit,
 ) = with(scope) {
     item(key = "summary") {
@@ -371,15 +379,28 @@ private fun resultItems(
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (r.lines.isEmpty()) Text("No line found. Try a deeper search.")
+            if (reference == null && onReference != null && r.lines.isNotEmpty()) Text(
+                "Build reference end boards for your deck to see how these boards compare →",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.clickable(onClick = onReference),
+            )
         }
     }
     itemsIndexed(r.lines, key = { i, _ -> "line$i" }) { i, line ->
-        LineCard(vm, i + 1, line, goingFirst, onOpen)
+        LineCard(vm, i + 1, line, goingFirst, reference, onOpen)
     }
 }
 
 @Composable
-private fun LineCard(vm: AppViewModel, rank: Int, line: Line, goingFirst: Boolean, onOpen: (List<Long>, Int) -> Unit) {
+private fun LineCard(
+    vm: AppViewModel,
+    rank: Int,
+    line: Line,
+    goingFirst: Boolean,
+    reference: com.ygoengine.ReferenceResult?,
+    onOpen: (List<Long>, Int) -> Unit,
+) {
     var showSteps by rememberSaveable(line.firstMove) { mutableStateOf(rank == 1) }
     var showReply by rememberSaveable(line.firstMove + "r") { mutableStateOf(false) }
     Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = RoundedCornerShape(14.dp)) {
@@ -401,6 +422,11 @@ private fun LineCard(vm: AppViewModel, rank: Int, line: Line, goingFirst: Boolea
             if (line.endBoard.isNotEmpty()) {
                 Text("End board", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                 BoardRow(vm, line.endBoard, onOpen)
+                if (reference != null && line.boardValue > 0 && goingFirst) Text(
+                    referenceLine(reference, line.boardValue),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
             }
             if (line.interrupts.isNotEmpty()) {
                 Text("Can stop on their turn", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)

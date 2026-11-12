@@ -14,6 +14,18 @@ data class BoardCard(val code: Long, val name: String, val where: String) {
     val onField: Boolean get() = listOf("hand", "gy", "grave", "banish", "deck").none { it in where.lowercase() }
 }
 
+/** The engine's replay of a video line by the real rules. */
+data class LineCheck(
+    val verified: Boolean,
+    val stepsMatched: Int,
+    val stepsChecked: Int,
+    val boardMatch: Double,
+    /** Why it didn't verify; "" when it did. */
+    val problem: String,
+    /** The line's combo pieces as the engine's JSON array, null unless verified. */
+    val library: String?,
+)
+
 /** A combo read from one video that passed the deck-list check. */
 data class VideoCombo(
     val url: String,
@@ -27,6 +39,8 @@ data class VideoCombo(
     val interruptions: List<String>,
     val chokePoints: List<String>,
     val uncertain: List<String>,
+    /** Null until the engine has replayed it. */
+    val check: LineCheck? = null,
 ) {
     val fieldCodes: List<Long> get() = endBoard.filter { it.onField }.map { it.code }
 }
@@ -152,6 +166,11 @@ class ComboStore(context: Context) {
 
     fun delete(deckId: String) { file(deckId).delete() }
 
+    /** Every saved library (one per archetype search result). */
+    fun all(): List<ComboLibrary> =
+        dir.listFiles { f -> f.name.endsWith(".json") }?.mapNotNull { f -> runCatching { decode(JSONObject(f.readText())) }.getOrNull() }
+            ?: emptyList()
+
     private fun strings(l: List<String>) = JSONArray(l)
     private fun JSONArray?.strings() = this?.let { a -> (0 until a.length()).map { a.optString(it) } } ?: emptyList()
     private fun JSONArray?.objects() = this?.let { a -> (0 until a.length()).map { a.getJSONObject(it) } } ?: emptyList()
@@ -170,6 +189,11 @@ class ComboStore(context: Context) {
                 .put("endBoard", JSONArray(v.endBoard.map { JSONObject().put("code", it.code).put("name", it.name).put("where", it.where) }))
                 .put("interruptions", strings(v.interruptions)).put("chokePoints", strings(v.chokePoints))
                 .put("uncertain", strings(v.uncertain))
+                .put("check", v.check?.let { c ->
+                    JSONObject().put("verified", c.verified).put("stepsMatched", c.stepsMatched)
+                        .put("stepsChecked", c.stepsChecked).put("boardMatch", c.boardMatch).put("problem", c.problem)
+                        .put("library", c.library ?: JSONObject.NULL)
+                } ?: JSONObject.NULL)
         }))
         .put("dropped", JSONArray(lib.dropped.map { JSONObject().put("url", it.url).put("title", it.title).put("reason", it.reason) }))
 
@@ -191,6 +215,13 @@ class ComboStore(context: Context) {
                 interruptions = v.optJSONArray("interruptions").strings(),
                 chokePoints = v.optJSONArray("chokePoints").strings(),
                 uncertain = v.optJSONArray("uncertain").strings(),
+                check = v.optJSONObject("check")?.let { c ->
+                    LineCheck(
+                        c.optBoolean("verified"), c.optInt("stepsMatched"), c.optInt("stepsChecked"),
+                        c.optDouble("boardMatch", 0.0), c.optString("problem"),
+                        if (c.isNull("library")) null else c.optString("library"),
+                    )
+                },
             )
         },
         dropped = o.optJSONArray("dropped").objects().map { DroppedVideo(it.optString("url"), it.optString("title"), it.optString("reason")) },

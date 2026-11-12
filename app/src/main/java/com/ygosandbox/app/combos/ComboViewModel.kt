@@ -3,6 +3,7 @@ package com.ygosandbox.app.combos
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.ygoengine.YgoEngine
 import com.ygosandbox.app.data.CardDatabase
 import com.ygosandbox.app.model.DeckAnalysis
 import kotlinx.coroutines.CancellationException
@@ -88,7 +89,7 @@ class ComboViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Reads [videos] one after another; one failing video doesn't stop the rest. */
-    fun read(deck: DeckAnalysis, db: CardDatabase, videos: List<VideoHit>) {
+    fun read(deck: DeckAnalysis, db: CardDatabase, videos: List<VideoHit>, engine: suspend () -> YgoEngine) {
         if (job?.isActive == true || videos.isEmpty()) return
         val key = settings.apiKey
         if (key.isBlank()) {
@@ -111,7 +112,12 @@ class ComboViewModel(app: Application) : AndroidViewModel(app) {
                     val work = File(getApplication<Application>().cacheDir, "combo-video")
                     try {
                         when (val r = readOne(hit, work, reader, cn, allowed, candidates, ::progress)) {
-                            is Outcome.Kept -> { kept++; save(library(deck.id).let { l -> l.copy(videos = l.videos.filter { it.url != hit.url } + r.combo) }) }
+                            is Outcome.Kept -> {
+                                kept++
+                                progress("Checking with the engine", 0.97f)
+                                val checked = checkOne(deck, db, r.combo, engine)
+                                save(library(deck.id).let { l -> l.copy(videos = l.videos.filter { it.url != hit.url } + checked) })
+                            }
                             is Outcome.Dropped -> { dropped++; save(library(deck.id).let { l -> l.copy(dropped = l.dropped.filter { it.url != hit.url } + DroppedVideo(hit.url, hit.title, r.reason)) }) }
                         }
                     } catch (e: CancellationException) {
@@ -134,6 +140,53 @@ class ComboViewModel(app: Application) : AndroidViewModel(app) {
             } finally {
                 _ui.update { it.copy(run = null) }
             }
+        }
+    }
+
+    /** Replays the read videos that the engine hasn't checked yet (all of them with [again]). */
+    fun check(deck: DeckAnalysis, db: CardDatabase, engine: suspend () -> YgoEngine, again: Boolean = false) {
+        if (job?.isActive == true) return
+        val todo = library(deck.id).videos.filter { again || it.check == null }
+        if (todo.isEmpty()) return
+        _ui.update { it.copy(runFor = deck.id, runNote = null) }
+        job = viewModelScope.launch {
+            var verified = 0
+            try {
+                todo.forEachIndexed { i, v ->
+                    _ui.update { it.copy(run = RunProgress(i + 1, todo.size, v.title, "Checking with the engine", i.toFloat() / todo.size)) }
+                    val c = checkOne(deck, db, v, engine)
+                    if (c.check?.verified == true) verified++
+                    save(library(deck.id).let { l -> l.copy(videos = l.videos.map { if (it.url == v.url) c else it }) })
+                }
+                _ui.update { it.copy(runNote = "$verified of ${todo.size} line${if (todo.size == 1) "" else "s"} verified by the engine.") }
+            } catch (e: CancellationException) {
+                _ui.update { it.copy(runNote = "Stopped.") }
+                throw e
+            } catch (e: Exception) {
+                _ui.update { it.copy(runNote = "The engine failed: ${e.message ?: e.toString()}") }
+            } finally {
+                _ui.update { it.copy(run = null) }
+            }
+        }
+    }
+
+    /**
+     * The engine replays the line by the real rules from its opening hand, with the tournament
+     * list closest to it. A verified line keeps its combo pieces, which the engine's search then
+     * uses (see [VideoPieces.libraryFor]). A failure here never loses the combo itself.
+     */
+    private suspend fun checkOne(deck: DeckAnalysis, db: CardDatabase, v: VideoCombo, engine: suspend () -> YgoEngine): VideoCombo {
+        val list = VideoPieces.deckFor(deck, v, db)
+            ?: return v.copy(check = LineCheck(false, 0, 0, 0.0, "no tournament list with a card list to replay it with", null))
+        return try {
+            val res = engine().videoLines(list, listOf(VideoPieces.input(v)), seconds = 45.0)
+            val l = res.lines.firstOrNull() ?: return v
+            v.copy(check = LineCheck(l.verified, l.stepsMatched, l.stepsChecked, l.boardMatch, l.problem,
+                if (l.verified) res.libraryJson else null))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            v // left unchecked: "Check with the engine" can try again
         }
     }
 

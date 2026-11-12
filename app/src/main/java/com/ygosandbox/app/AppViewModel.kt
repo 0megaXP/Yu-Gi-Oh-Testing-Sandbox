@@ -434,7 +434,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var sideJob: Job? = null
 
     /** Opens the engine once; the first time it copies the card scripts into app storage. */
-    private suspend fun engine(): YgoEngine = engineLock.withLock {
+    suspend fun engine(): YgoEngine = engineLock.withLock {
         engine ?: run {
             _ui.update { it.copy(play = it.play.copy(preparing = true)) }
             try {
@@ -493,7 +493,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             knowledge = if (setup.real) Knowledge.REAL else Knowledge.PRACTICE,
             seed = System.currentTimeMillis(),
             // Your deck's combo pieces, if its reference boards were built.
-            library = referenceFor(mine)?.libraryJson,
+            library = pieceLibrary(mine),
             settings = SearchSettings(
                 iterations = setup.depth.iterations,
                 verifyIterations = setup.depth.verifyIterations,
@@ -551,7 +551,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     iterations = setup.depth.iterations,
                     branchIterations = (setup.depth.iterations / 6).coerceIn(150, 800),
                     seed = System.currentTimeMillis(),
-                    library = referenceFor(mine)?.libraryJson,
+                    library = pieceLibrary(mine),
                 ) { p -> _ui.update { it.copy(play = it.play.copy(treeProgress = p)) } }
                 _ui.update { it.copy(play = it.play.copy(tree = tree)) }
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -609,6 +609,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     val references = com.ygosandbox.app.data.ReferenceStore(app)
     private var refJob: Job? = null
+
+    private val videoCombos = com.ygosandbox.app.combos.ComboStore(app)
+
+    /**
+     * The combo pieces the engine's search starts from for a deck: its reference boards' pieces
+     * plus those of verified video lines the deck can play (Combos tab).
+     */
+    fun pieceLibrary(choice: DeckChoice?): String? {
+        choice ?: return null
+        val video = runCatching {
+            com.ygosandbox.app.combos.VideoPieces.libraryFor(videoCombos, (choice.main + choice.extra).toSet()) { id -> db.find(id)?.id ?: id }
+        }.getOrNull()
+        return com.ygosandbox.app.combos.VideoPieces.merge(referenceFor(choice)?.libraryJson, video)
+    }
 
     fun referenceFor(choice: DeckChoice?): com.ygoengine.ReferenceResult? =
         choice?.let { references.load(references.signature(it.main, it.extra)) }
@@ -692,8 +706,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         duelJob = viewModelScope.launch {
             try {
                 // Each bot uses its deck's combo pieces when that deck has reference boards.
-                val lib1 = referenceFor(d1)?.libraryJson
-                val lib2 = referenceFor(d2)?.libraryJson
+                val lib1 = pieceLibrary(d1)
+                val lib2 = pieceLibrary(d2)
                 val duel = engine().newDuel(
                     if (deck1First) d1.toEngine(::cardName) else d2.toEngine(::cardName),
                     if (deck1First) d2.toEngine(::cardName) else d1.toEngine(::cardName),

@@ -95,8 +95,19 @@ fun CombosTab(deck: DeckAnalysis, vm: AppViewModel, cvm: ComboViewModel, openCar
 
         if (lines.isNotEmpty()) item {
             val n = lib?.videos?.size ?: 0
-            Text("${lines.size} line${if (lines.size == 1) "" else "s"} from $n video${if (n == 1) "" else "s"}",
-                style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            val verified = lib?.videos?.count { it.check?.verified == true } ?: 0
+            val unchecked = lib?.videos?.count { it.check == null } ?: 0
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("${lines.size} line${if (lines.size == 1) "" else "s"} from $n video${if (n == 1) "" else "s"}",
+                    style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                ComboNote(
+                    "$verified verified by the engine. Verified lines are replayed by the real rules; their " +
+                        "sub-combos steer the engine's search, the combo tree and the bots for decks that can play them."
+                )
+                if (unchecked > 0 && !busyHere && !busyElsewhere) OutlinedButton(onClick = { cvm.check(deck, vm.db, vm::engine) }) {
+                    Text("Check $unchecked with the engine")
+                }
+            }
         }
         items(lines, key = { it.main.url }) { line -> LineCard(vm, cvm, deck.id, line, openCards) }
 
@@ -213,7 +224,7 @@ private fun PickVideos(deck: DeckAnalysis, vm: AppViewModel, cvm: ComboViewModel
             if (ui.hits.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
                 Button(
-                    onClick = { cvm.read(deck, vm.db, ui.hits.filter { it.url in picked }) },
+                    onClick = { cvm.read(deck, vm.db, ui.hits.filter { it.url in picked }, vm::engine) },
                     enabled = picked.isNotEmpty(),
                 ) { Text("Read ${picked.size} video${if (picked.size == 1) "" else "s"}") }
                 ComboNote("Each video is downloaded, read and deleted; only the combo is kept.")
@@ -252,6 +263,7 @@ private fun LineCard(vm: AppViewModel, cvm: ComboViewModel, deckId: String, line
                     if (v.going == "second") " · going second" else "",
                 fontWeight = FontWeight.SemiBold,
             )
+            CheckBadge(line)
             val board = v.endBoard.filter { it.onField }.map { it.code }
             ComboLabel("End board")
             Thumbs(vm, board, openCards)
@@ -295,6 +307,27 @@ private fun LineCard(vm: AppViewModel, cvm: ComboViewModel, deckId: String, line
             line.videos.forEach { src -> Source(src, onOpen = { runCatching { uri.openUri(src.url) } }, onForget = { cvm.forget(deckId, src.url) }) }
         }
     }
+}
+
+/** What the engine made of the line: the best check among its videos. */
+@Composable
+private fun CheckBadge(line: ComboLine) {
+    val checks = line.videos.mapNotNull { it.check }
+    val best = checks.firstOrNull { it.verified } ?: checks.maxByOrNull { it.stepsMatched }
+    val text = when {
+        best == null -> "Not checked by the engine yet"
+        best.verified -> "✓ Played by the engine: ${best.stepsMatched} of ${best.stepsChecked} steps, " +
+            "${(best.boardMatch * 100).toInt()}% of the end board"
+        else -> "Not verified: ${best.problem}"
+    }
+    Text(
+        text, style = MaterialTheme.typography.bodySmall,
+        color = when {
+            best?.verified == true -> MaterialTheme.colorScheme.tertiary
+            best == null -> MaterialTheme.colorScheme.onSurfaceVariant
+            else -> MaterialTheme.colorScheme.error
+        },
+    )
 }
 
 @Composable

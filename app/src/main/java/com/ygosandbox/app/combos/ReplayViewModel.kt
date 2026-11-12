@@ -202,8 +202,10 @@ class ReplayViewModel(app: Application) : AndroidViewModel(app) {
         }
         val side = ours() ?: return Result.Dropped("Couldn't tell which player uses ${deck.title}")
 
-        progress("Writing the report", 0.92f)
-        val raw = reader.writeMatch(events, hit.title, video.description, video.captions, deck.title)
+        val raw = reader.writeMatch(events, hit.title, video.description, video.captions, deck.title) { part, total ->
+            if (part == 0) progress("Outlining the games", 0.92f)
+            else progress("Writing game $part of $total", 0.93f + 0.06f * (part - 1) / total)
+        }
         val other = if (side == "A") "B" else "A"
         fun resolve(name: String, ourSide: Boolean): Long? = cn.resolve(name, if (ourSide) allowed else emptySet())
 

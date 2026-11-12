@@ -11,6 +11,9 @@ import java.net.URL
 
 class ClaudeException(message: String) : Exception(message)
 
+/** The answer didn't fit (too long or too slow): this video fails, the next ones still run. */
+class AnswerTooLong(message: String) : Exception(message)
+
 /**
  * Reads combo-video frames with Claude, in two passes:
  * 1. frames in small batches, in order, logging every action on screen;
@@ -107,7 +110,14 @@ class ComboReader(private val apiKey: String, private val model: String) {
         }.joinToString("\n")
 
     /** One Messages API call with a forced tool; retries rate limits and overloads. */
-    internal suspend fun call(system: String, content: JSONArray, tool: JSONObject, maxTokens: Int): JSONObject {
+    internal suspend fun call(
+        system: String,
+        content: JSONArray,
+        tool: JSONObject,
+        maxTokens: Int,
+        /** How long to wait for the whole answer; long write-ups need more. */
+        timeoutMs: Int = 180_000,
+    ): JSONObject {
         val body = JSONObject()
             .put("model", model)
             .put("max_tokens", maxTokens)
@@ -117,17 +127,22 @@ class ComboReader(private val apiKey: String, private val model: String) {
             .put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", content)))
             .toString().toByteArray()
         var wait = 4_000L
+        var timeouts = 0
         repeat(5) { attempt ->
-            val (code, text) = withContext(Dispatchers.IO) { post(body) }
+            val (code, text) = withContext(Dispatchers.IO) { post(body, timeoutMs) }
             when {
                 code in 200..299 -> {
-                    val blocks = JSONObject(text).optJSONArray("content") ?: JSONArray()
+                    val o = JSONObject(text)
+                    // cut off at max_tokens: asking again gives the same; the caller splits the work
+                    if (o.optString("stop_reason") == "max_tokens") throw AnswerTooLong("the answer was longer than $maxTokens tokens")
+                    val blocks = o.optJSONArray("content") ?: JSONArray()
                     for (i in 0 until blocks.length()) {
                         val b = blocks.getJSONObject(i)
                         if (b.optString("type") == "tool_use") return b.getJSONObject("input")
                     }
                     if (attempt == 4) throw ClaudeException("Claude returned no structured answer")
                 }
+                code == 598 -> if (++timeouts >= 2) throw AnswerTooLong("no answer within ${timeoutMs / 1000} s")
                 code == 401 -> throw ClaudeException("The API key was rejected (check it in the Combos tab settings)")
                 code == 400 || code == 404 -> throw ClaudeException("Request refused: " + errorMessage(text))
                 code == 429 || code >= 500 -> if (attempt == 4) throw ClaudeException("Claude is busy: " + errorMessage(text))
@@ -142,10 +157,10 @@ class ComboReader(private val apiKey: String, private val model: String) {
     private fun errorMessage(text: String) =
         runCatching { JSONObject(text).getJSONObject("error").getString("message") }.getOrDefault(text.take(200))
 
-    private fun post(body: ByteArray): Pair<Int, String> {
+    private fun post(body: ByteArray, timeoutMs: Int): Pair<Int, String> {
         val conn = URL("https://api.anthropic.com/v1/messages").openConnection() as HttpURLConnection
         conn.connectTimeout = 20_000
-        conn.readTimeout = 180_000
+        conn.readTimeout = timeoutMs
         conn.requestMethod = "POST"
         conn.doOutput = true
         conn.setRequestProperty("content-type", "application/json")
@@ -156,6 +171,8 @@ class ComboReader(private val apiKey: String, private val model: String) {
             val code = conn.responseCode
             val text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.use { it.readText() } ?: ""
             code to text
+        } catch (e: java.net.SocketTimeoutException) {
+            598 to "timed out" // the answer took too long: tried once more, then the caller is told
         } catch (e: java.io.IOException) {
             599 to (e.message ?: "network error") // retried like an overload
         } finally {

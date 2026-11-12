@@ -172,43 +172,84 @@ class MatchReader(private val claude: ComboReader) {
         }
     }
 
-    suspend fun writeMatch(events: List<Event>, title: String, description: String, captions: String, archetype: String): RawMatch {
-        val log = events.joinToString("\n") { "%.0fs | %s | %s | %s | %s".format(it.t, it.side, it.action, it.card, it.detail) }
-        val prompt = buildString {
-            append("Video: $title\nDescription:\n${description.take(3000)}\n\n")
-            append("One side plays $archetype.\n\n")
-            append("Frame log (time | side | action | card | detail):\n$log\n\n")
-            if (captions.isNotEmpty()) append("Captions (commentary):\n${captions.take(20000)}\n\n")
-            append(
-                "Write the match up: each game with who went first, who won and how, and every turn with a one-line " +
-                    "summary, the main cards played, the board it ended on, and the interruptions used (by whom, on what). " +
-                    "Add the turning points, side deck changes between games, and for each side the lessons a player of " +
-                    "that deck can take from these games. Use exact card names. Leave out what the video doesn't show."
-            )
-        }
-        val o = claude.call("You turn a Yu-Gi-Oh! match video log into a precise match report.", JSONArray().put(claude.text(prompt)), MATCH_TOOL, 12000)
+    /**
+     * Pass 2, in parts so no answer gets too long for a long match: first an outline (the
+     * games, who went first and won, sides, side deck changes, takeaways), then each game's
+     * turns from the log of that game only.
+     */
+    suspend fun writeMatch(
+        events: List<Event>,
+        title: String,
+        description: String,
+        captions: String,
+        archetype: String,
+        onPart: (Int, Int) -> Unit = { _, _ -> },
+    ): RawMatch {
+        fun line(e: Event) = "%.0fs | %s | %s | %s | %s".format(e.t, e.side, e.action, e.card, e.detail)
         fun JSONObject.strings(k: String) = optJSONArray(k)?.let { a -> (0 until a.length()).map { a.optString(it) } }?.filter { it.isNotBlank() } ?: emptyList()
         fun JSONArray?.objects() = this?.let { a -> (0 until a.length()).map { a.getJSONObject(it) } } ?: emptyList()
+
+        onPart(0, 0)
+        val outlinePrompt = buildString {
+            append("Video: $title\nDescription:\n${description.take(3000)}\n\n")
+            append("One side plays $archetype.\n\n")
+            append("Frame log (time | side | action | card | detail):\n${events.joinToString("\n") { line(it) }.takeLast(60000)}\n\n")
+            if (captions.isNotEmpty()) append("Captions (commentary):\n${captions.takeLast(20000)}\n\n")
+            append(
+                "Outline the match: the games in it (with the times each starts and ends in the video), who went " +
+                    "first and who won each and how, the two sides' players and decks, side deck changes between " +
+                    "games, and for each side the lessons a player of that deck can take. Leave out what the video " +
+                    "doesn't show."
+            )
+        }
+        val o = claude.call("You outline a Yu-Gi-Oh! match video from its log.", JSONArray().put(claude.text(outlinePrompt)),
+            OUTLINE_TOOL, 4000, timeoutMs = 300_000)
         val sides = o.optJSONObject("sides") ?: JSONObject()
+        var outline = o.optJSONArray("games").objects()
+        val lastT = events.maxOfOrNull { it.t } ?: 0.0
+        if (outline.isEmpty())  // nothing outlined: treat the whole video as one game
+            outline = listOf(JSONObject().put("number", 1).put("start", 0).put("end", lastT).put("first", "unknown").put("winner", "unknown"))
+
+        val games = outline.mapIndexed { gi, g ->
+            onPart(gi + 1, outline.size)
+            val t0 = g.optDouble("start", 0.0) - 5
+            val t1 = (if (g.has("end")) g.optDouble("end", lastT) else lastT) + 5
+            val log = events.filter { it.t in t0..t1 }
+            val prompt = buildString {
+                append("Video: $title\nOne side plays $archetype. This is game ${g.optInt("number", gi + 1)}, ")
+                append("${g.optString("first", "unknown")} went first, ${g.optString("winner", "unknown")} won.\n\n")
+                append("Frame log of this game (time | side | action | card | detail):\n${log.joinToString("\n") { line(it) }.takeLast(60000)}\n\n")
+                val cap = claude.captionsAround(captions, t0, t1).takeLast(15000)
+                if (cap.isNotEmpty()) append("Captions:\n$cap\n\n")
+                append(
+                    "Write every turn of this game: a one-line summary, the main cards played, the board that side " +
+                        "ended on, and the interruptions used (by whom, on what). Then the turning points. Use exact " +
+                        "card names."
+                )
+            }
+            val r = runCatching {
+                claude.call("You write up one game of a Yu-Gi-Oh! match from its log.", JSONArray().put(claude.text(prompt)),
+                    GAME_TOOL, 8000, timeoutMs = 300_000)
+            }.getOrElse { e -> if (e is AnswerTooLong) JSONObject() else throw e }  // a game too long to write up keeps its outline
+            RawGame(
+                number = g.optInt("number", gi + 1), first = g.optString("first", "unknown"), winner = g.optString("winner", "unknown"),
+                how = g.optString("how"), turningPoints = r.strings("turning_points"),
+                turns = r.optJSONArray("turns").objects().map { t ->
+                    RawTurn(
+                        turn = t.optInt("turn"), side = t.optString("side"), summary = t.optString("summary"),
+                        plays = t.strings("plays"), endBoard = t.strings("end_board"),
+                        interrupts = t.optJSONArray("interruptions").objects().map { i ->
+                            RawInterrupt(i.optString("card"), i.optString("side"), i.optString("on"))
+                        },
+                    )
+                },
+            )
+        }
         return RawMatch(
             format = o.optString("format", "unknown"),
             sideA = sides.optString("A"),
             sideB = sides.optString("B"),
-            games = o.optJSONArray("games").objects().map { g ->
-                RawGame(
-                    number = g.optInt("number", 1), first = g.optString("first", "unknown"), winner = g.optString("winner", "unknown"),
-                    how = g.optString("how"), turningPoints = g.strings("turning_points"),
-                    turns = g.optJSONArray("turns").objects().map { t ->
-                        RawTurn(
-                            turn = t.optInt("turn"), side = t.optString("side"), summary = t.optString("summary"),
-                            plays = t.strings("plays"), endBoard = t.strings("end_board"),
-                            interrupts = t.optJSONArray("interruptions").objects().map { i ->
-                                RawInterrupt(i.optString("card"), i.optString("side"), i.optString("on"))
-                            },
-                        )
-                    },
-                )
-            },
+            games = games,
             sideChanges = o.strings("side_changes"),
             lessonsA = o.optJSONObject("lessons")?.strings("A") ?: emptyList(),
             lessonsB = o.optJSONObject("lessons")?.strings("B") ?: emptyList(),
@@ -250,9 +291,9 @@ class MatchReader(private val claude: ComboReader) {
             required = listOf("card", "side"),
         )
 
-        private val MATCH_TOOL: JSONObject = JSONObject()
-            .put("name", "write_match")
-            .put("description", "Write the match shown in the video.")
+        private val OUTLINE_TOOL: JSONObject = JSONObject()
+            .put("name", "outline_match")
+            .put("description", "Outline the match shown in the video.")
             .put("input_schema", ComboReader.schema(
                 "format" to ComboReader.enum(listOf("TCG", "OCG", "Master Duel", "unknown")),
                 "sides" to ComboReader.schema(
@@ -261,20 +302,12 @@ class MatchReader(private val claude: ComboReader) {
                 ),
                 "games" to ComboReader.arr(ComboReader.schema(
                     "number" to JSONObject().put("type", "integer"),
+                    "start" to JSONObject().put("type", "number").put("description", "second of the video the game starts"),
+                    "end" to JSONObject().put("type", "number").put("description", "second of the video the game ends"),
                     "first" to ComboReader.enum(listOf("A", "B", "unknown")),
                     "winner" to ComboReader.enum(listOf("A", "B", "unknown")),
                     "how" to ComboReader.str("how the game was won, one sentence"),
-                    "turns" to ComboReader.arr(ComboReader.schema(
-                        "turn" to JSONObject().put("type", "integer"),
-                        "side" to ComboReader.enum(listOf("A", "B")),
-                        "summary" to ComboReader.str("one line"),
-                        "plays" to ComboReader.arr(ComboReader.str(), "main cards played"),
-                        "end_board" to ComboReader.arr(ComboReader.str(), "that side's field at the end of the turn"),
-                        "interruptions" to ComboReader.arr(INTERRUPT),
-                        required = listOf("turn", "side", "summary"),
-                    )),
-                    "turning_points" to ComboReader.arr(ComboReader.str()),
-                    required = listOf("number", "first", "winner", "turns"),
+                    required = listOf("number", "start", "first", "winner"),
                 )),
                 "side_changes" to ComboReader.arr(ComboReader.str(), "cards sided in / out between games, if shown"),
                 "lessons" to ComboReader.schema(
@@ -282,6 +315,23 @@ class MatchReader(private val claude: ComboReader) {
                     required = listOf(),
                 ),
                 required = listOf("sides", "games"),
+            ))
+
+        private val GAME_TOOL: JSONObject = JSONObject()
+            .put("name", "write_game")
+            .put("description", "Write up one game turn by turn.")
+            .put("input_schema", ComboReader.schema(
+                "turns" to ComboReader.arr(ComboReader.schema(
+                    "turn" to JSONObject().put("type", "integer"),
+                    "side" to ComboReader.enum(listOf("A", "B")),
+                    "summary" to ComboReader.str("one line"),
+                    "plays" to ComboReader.arr(ComboReader.str(), "main cards played"),
+                    "end_board" to ComboReader.arr(ComboReader.str(), "that side's field at the end of the turn"),
+                    "interruptions" to ComboReader.arr(INTERRUPT),
+                    required = listOf("turn", "side", "summary"),
+                )),
+                "turning_points" to ComboReader.arr(ComboReader.str()),
+                required = listOf("turns"),
             ))
     }
 }

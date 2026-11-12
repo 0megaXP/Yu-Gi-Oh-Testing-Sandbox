@@ -16,7 +16,14 @@ data class DeckChoice(
     val extra: List<Long>,
     val side: List<Long>,
 ) {
-    fun toEngine() = EngineDeck(name = name, main = main, extra = extra, side = side)
+    /**
+     * The deck for the engine. [cardName] gives each passcode's real name, so the engine can
+     * catch passcodes it would map to the wrong card (or not know yet).
+     */
+    fun toEngine(cardName: (Long) -> String? = { null }) = EngineDeck(
+        name = name, main = main, extra = extra, side = side,
+        names = (main + extra + side).distinct().mapNotNull { id -> cardName(id)?.let { id to it } }.toMap(),
+    )
 }
 
 fun deckChoices(myDecks: List<SavedDeck>, searches: List<DeckAnalysis>): List<DeckChoice> = buildList {

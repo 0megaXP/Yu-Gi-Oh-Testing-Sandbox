@@ -481,9 +481,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(play = it.play.copy(error = problem)) }
             return
         }
-        val me = SideState(deck = mine!!.toEngine(), hand = setup.myHand)
+        val me = SideState(deck = mine!!.toEngine(::cardName), hand = setup.myHand)
         val opp = SideState(
-            deck = theirs!!.toEngine(),
+            deck = theirs!!.toEngine(::cardName),
             hand = if (!setup.real && setup.opponentHand.size == HAND_SIZE) setup.opponentHand else null,
         )
         val request = AnalysisRequest(
@@ -547,7 +547,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             try {
                 val tree = engine().comboTree(
-                    mine!!.toEngine(), setup.myHand, opponent?.toEngine(),
+                    mine!!.toEngine(::cardName), setup.myHand, opponent?.toEngine(::cardName),
                     iterations = setup.depth.iterations,
                     branchIterations = (setup.depth.iterations / 6).coerceIn(150, 800),
                     seed = System.currentTimeMillis(),
@@ -590,7 +590,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             try {
                 val result = engine().side(
-                    mine.toEngine(), theirs.toEngine(),
+                    mine.toEngine(::cardName), theirs.toEngine(::cardName),
                     simulateTurns = if (play.sideSimulate) 6 else 0,
                     iterationsPerTurn = 500,
                 ) { p -> _ui.update { it.copy(play = it.play.copy(sideProgress = p)) } }
@@ -620,7 +620,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(play = it.play.copy(refError = null, refProgress = com.ygoengine.Progress("starting", 0, 0))) }
             try {
                 val result = engine().reference(
-                    choice.toEngine(),
+                    choice.toEngine(::cardName),
                     hands = if (thorough) 30 else 12,
                     iterations = if (thorough) 2000 else 1000,
                     seed = System.currentTimeMillis(),
@@ -645,6 +645,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun stopSidePlan() {
         engine?.cancel()
     }
+
+    /** A passcode's card name from the downloaded card database (null if unknown). */
+    private fun cardName(id: Long): String? = db.find(id)?.name
 
     // ---------- Duel simulator ----------
 
@@ -692,9 +695,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val lib1 = referenceFor(d1)?.libraryJson
                 val lib2 = referenceFor(d2)?.libraryJson
                 val duel = engine().newDuel(
-                    if (deck1First) d1.toEngine() else d2.toEngine(),
-                    if (deck1First) d2.toEngine() else d1.toEngine(),
+                    if (deck1First) d1.toEngine(::cardName) else d2.toEngine(::cardName),
+                    if (deck1First) d2.toEngine(::cardName) else d1.toEngine(::cardName),
                     libraries = if (deck1First) listOf(lib1, lib2) else listOf(lib2, lib1),
+                    // The engine asks the person for their own zone choices.
+                    human = if (humanMode) bottom else -1,
                 )
                 liveDuel = duel
                 publishDuelState(duel)

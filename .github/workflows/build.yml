@@ -7,6 +7,13 @@ on:
 permissions:
   contents: write # lets the job publish a release for the in-app updater
 
+# One build per branch at a time: two main builds running side by side could publish out of
+# order, and GitHub marks the last one published as "latest", so the app would be offered an
+# older version. A newer push waits for the running build; an older waiting one is skipped.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -53,6 +60,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           NOTES: ${{ github.event.head_commit.message }}
         run: |
+          # only a higher version than the current latest may become "latest"
+          LATEST=$(gh release view --json tagName -q .tagName 2>/dev/null | sed 's/^v0\.0\.//')
+          MARK=true
+          if [ -n "$LATEST" ] && [ "$LATEST" -gt "$GITHUB_RUN_NUMBER" ] 2>/dev/null; then MARK=false; fi
           gh release create "v$VERSION" app/build/outputs/apk/release/YGOSandbox-$VERSION.apk \
             --title "YGO Sandbox $VERSION" \
-            --notes "${NOTES:-New build}"
+            --notes "${NOTES:-New build}" \
+            --latest=$MARK

@@ -190,6 +190,12 @@ class CardNames(private val db: CardDatabase) {
     /** The card whose name is exactly [text] (any card), or null. */
     fun exact(text: String): Long? = byNorm[norm(text)]
 
+    // every card's name without spaces or punctuation, for text read with the spaces dropped
+    private val byLoose: Map<String, Long> by lazy { byNorm.entries.associate { it.key.replace(" ", "") to it.value } }
+
+    /** The card whose name is [text] ignoring spaces and punctuation (any card), or null. */
+    fun exactLoose(text: String): Long? = byLoose[norm(text).replace(" ", "")]
+
     private fun resolveUncached(text: String, prefer: Set<Long>): Long? {
         val key = norm(text)
         if (key.isEmpty()) return null

@@ -77,7 +77,6 @@ object FreeReader {
         val logEvents = ArrayList<Event>()
         val nameEvents = ArrayList<Event>()
         var logFrames = 0
-        var previousLines = emptyMap<String, Int>()
         val lastSeen = HashMap<Long, Int>()        // frame index a card's name was last on screen
         val lastEvent = HashMap<Long, Double>()    // when a card last counted
         try {
@@ -89,21 +88,13 @@ object FreeReader {
                 bmp.recycle()
                 text ?: return@forEachIndexed
                 // lines top to bottom: a log grows downwards, so new lines come in reading order
-                val lines = text.textBlocks.flatMap { it.lines }.sortedBy { it.boundingBox?.top ?: 0 }.map { it.text.trim() }
+                val boxed = text.textBlocks.flatMap { it.lines }.sortedBy { it.boundingBox?.top ?: 0 }
+                val lines = boxed.map { it.text.trim() }
 
-                // --- duel log lines: new ones only (a line staying on screen is the same action)
-                val counts = lines.groupingBy { it }.eachCount()
-                var logHere = 0
-                val seenNow = HashMap<String, Int>()
-                for (raw in lines) {
-                    val k = seenNow.merge(raw, 1, Int::plus)!!
-                    val parsed = parseLogLine(raw, cn, pool) ?: continue
-                    logHere++
-                    if (k <= (previousLines[raw] ?: 0)) continue  // was already there
-                    logEvents += parsed.copy(t = f.seconds)
-                }
-                if (logHere >= 2) logFrames++
-                previousLines = counts
+                // --- duel log: the entries on screen, stitched onto what was read so far (it scrolls)
+                val here = logEntries(boxed, cn, pool, f.seconds)
+                if (here.size >= 2) logFrames++
+                if (here.isNotEmpty()) stitch(logEvents, here)
 
                 // --- card names alone: only a line that is just the name (a banner or card title),
                 // not a sentence or effect text that mentions other cards; also wrapped over two lines
@@ -212,6 +203,105 @@ object FreeReader {
             SPOKEN_VERBS.firstOrNull { (v, _) -> ' ' !in v && words[j].startsWith(v) }?.let { return it.second }
         }
         return null
+    }
+
+    // Log verbs, compared with spaces removed (text recognition sometimes drops them:
+    // "LevyRozmandeclaredeffectof"). Most specific first.
+    private val LOG_VERBS = listOf(
+        "declaredeffectof" to "activate", "activated" to "activate", "normalsummoned" to "normal_summon",
+        "tributesummoned" to "normal_summon", "specialsummoned" to "special_summon", "flipsummoned" to "special_summon",
+        "summoned" to "special_summon", "banished" to "banish", "discarded" to "send_to_gy", "detached" to "send_to_gy",
+        "sent" to "send_to_gy", "attached" to "attach", "added" to "search", "returned" to "search", "set" to "set",
+    )
+
+    /** A log header in [raw]: (action, player, the text after the verb), or null. */
+    private fun header(raw: String): Triple<String, String, String>? {
+        val quote = raw.indexOfFirst { it == '"' || it == '“' || it == '”' }
+        val before = if (quote >= 0) raw.substring(0, quote) else raw
+        val compact = before.lowercase().filter { it.isLetterOrDigit() }
+        for ((verb, action) in LOG_VERBS) {
+            val i = compact.lastIndexOf(verb)
+            // the verb ends the text before the card name, after a player name
+            if (i < 2 || i + verb.length != compact.length) continue
+            return Triple(action, compact.substring(0, i), if (quote >= 0) raw.substring(quote) else "")
+        }
+        return null
+    }
+
+    /**
+     * The duel log entries in one frame, top to bottom. A log (Duelingbook's, for one) writes
+     * `Player declared effect of` with the card name in quotes, often on the next line; text
+     * recognition may drop the spaces ("AngelechyDestrier"). Only lines in the log's column
+     * count, so quoted names in a card's effect text elsewhere on screen are ignored.
+     */
+    private fun logEntries(boxed: List<com.google.mlkit.vision.text.Text.Line>, cn: CardNames, pool: Set<Long>, t: Double): List<Event> {
+        val headers = boxed.filter { header(it.text.trim()) != null }
+        if (headers.isEmpty()) return emptyList()
+        val column = headers.mapNotNull { it.boundingBox?.left }.sorted().let { it[it.size / 2] }
+        val width = boxed.maxOfOrNull { it.boundingBox?.right ?: 0 } ?: 1000
+        val inColumn = boxed.filter { l -> l.boundingBox?.left?.let { kotlin.math.abs(it - column) < width / 20 } == true }
+        val out = ArrayList<Event>()
+        var pending: Pair<String, String?>? = null  // action, player of a header waiting for its card
+        for (line in inColumn) {
+            val raw = line.text.trim()
+            val h = header(raw)
+            if (h != null) {
+                val (action, player, rest) = h
+                val id = quotedCard(rest, cn, pool)
+                if (id != null) { out += Event(t, id, action, player, true, raw); pending = null }
+                else pending = action to player
+                continue
+            }
+            val id = quotedCard(raw, cn, pool) ?: continue
+            val p = pending ?: continue   // a quoted name with no header above it: not a log entry
+            out += Event(t, id, p.first, p.second, true, raw)
+            pending = null
+        }
+        return out
+    }
+
+    /** The card named in quotes in [text] (spaces optional), or null. */
+    private fun quotedCard(text: String, cn: CardNames, pool: Set<Long>): Long? {
+        val q = text.trim().trim('"', '“', '”', '\'', ' ')
+        if (q.length < 3) return null
+        if (!text.contains('"') && !text.contains('“') && !text.contains('”')) return null
+        return (cn.exactLoose(q) ?: cn.match(q, pool, 0.85))?.let { cn.canonical(it) }
+    }
+
+    /**
+     * Appends the entries of a new frame to [seq]. The log scrolls, so the frame mostly repeats
+     * the last entries read: the frame is aligned with them (longest common subsequence, in
+     * order) and what comes after the last aligned entry is new. A line text recognition missed
+     * in one frame doesn't break the alignment, and a card played twice in a row isn't lost.
+     * Tested on a real Duelingbook video (frames every 2 s, card text panel in view).
+     */
+    private fun stitch(seq: MutableList<Event>, frame: List<Event>) {
+        fun same(a: Event, b: Event) = a.code == b.code && a.action == b.action
+        val tail = seq.takeLast(frame.size + 4)
+        val n = tail.size
+        val m = frame.size
+        val lcs = Array(n + 1) { IntArray(m + 1) }
+        for (i in n - 1 downTo 0) for (j in m - 1 downTo 0)
+            lcs[i][j] = if (same(tail[i], frame[j])) lcs[i + 1][j + 1] + 1 else maxOf(lcs[i + 1][j], lcs[i][j + 1])
+        var i = 0
+        var j = 0
+        var lastI = -1
+        var lastJ = -1
+        while (i < n && j < m) {
+            when {
+                same(tail[i], frame[j]) -> { lastI = i; lastJ = j; i++; j++ }
+                lcs[i + 1][j] >= lcs[i][j + 1] -> i++
+                else -> j++
+            }
+        }
+        val matched = lcs[0][0]
+        when {
+            // it lines up with the end of what was read: the rest is new
+            matched >= minOf(2, m) && lastI >= n - 2 -> seq += frame.subList(lastJ + 1, m)
+            // the first frame, or the log moved on more than a screen
+            matched == 0 || seq.isEmpty() -> seq += frame
+            // otherwise an older part of the log (scrolled back, or misread): nothing new
+        }
     }
 
     /** A duel log line: an action with a card, a turn line or a win line; null for anything else. */

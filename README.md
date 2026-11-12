@@ -42,6 +42,13 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
   Inside each category cards are sorted by type: Monsters, Spells, Traps, Fusion, Synchro, Xyz, Link.
   Results are saved in the deck list, together with the full card list of every tournament deck used.
   Open a deck in the Decks tab to see its list and import it into My decks. Tap a card for its details; use the arrows for the previous or next one.
+- **Combos from videos** (test): the *Combos* tab of an archetype search result.
+  - *Find combo videos* searches YouTube for "<archetype> combo". It keeps only titles that name the archetype, skips pack openings, tier lists and Shorts, and drops videos older than the chosen period (default: since the last banlist).
+  - For each video you tick, the app downloads it at up to 720p, keeps one frame per screen change, and has Claude read the cards and steps. The English captions and the description help when YouTube has them. The video is deleted afterwards; only the combo is kept.
+  - **Deck-list check:** a video is left out as soon as its combo plays a card that none of the result's tournament lists play. Reading stops at that point, so the rest of the video isn't paid for. Cards that are only held in hand and hand traps the opponent shows don't count. A card that can't be identified also drops the video, because the check can't be done. Left-out videos are listed with the reason.
+  - Videos ending on mostly the same field cards (60%) count as one line. Lines are sorted by how many videos show them, each with its end board, opening hand, interruptions, choke points and the steps. Tap a step's time to open the video there.
+  - Needs an Anthropic API key, entered in the tab and kept only on the phone. The model can be changed there too (default `claude-sonnet-5-5`).
+  - YouTube search and downloads use [NewPipe Extractor](https://github.com/TeamNewPipe/NewPipeExtractor) on the phone's own connection. When YouTube changes its site, searches can fail until the app updates the library. Saved per result in `combos/`.
 - **Play engine** (test): finds the best plays for an opening hand against a real deck.
   - Pick your deck and the opponent's deck from My decks or any tournament list saved by an Archetype search.
   - Choose going first or second, your 5-card hand (pick or random) and a search depth.

@@ -215,7 +215,11 @@ class ComboViewModel(app: Application) : AndroidViewModel(app) {
         progress("Downloading", 0f)
         val video = VideoSource.fetch(hit.url, work) { progress("Downloading", it * 0.3f) }
         progress("Finding the steps", 0.3f)
-        val frames = Frames.extract(video.file, File(work, "frames")) { progress("Finding the steps", 0.3f + it * 0.15f) }
+        var at = ""
+        val frames = Frames.extract(
+            video.file, File(work, "frames"),
+            onPosition = { t, total -> at = " (${clock(t / 1000.0)} of ${clock(total / 1000.0)})" },
+        ) { progress("Finding the steps$at", 0.3f + it * 0.15f) }
         video.file.delete()
         if (frames.isEmpty()) throw IllegalStateException("No frames could be read from the video")
 

@@ -153,9 +153,11 @@ class ReplayViewModel(app: Application) : AndroidViewModel(app) {
         val video = VideoSource.fetch(hit.url, work) { progress("Downloading", it * 0.25f) }
         progress("Finding the plays", 0.25f)
         // whole games: a frame every 2 s, at most 360 kept
-        val frames = Frames.extract(video.file, File(work, "frames"), maxFrames = 360, stepMs = 2000) {
-            progress("Finding the plays", 0.25f + it * 0.15f)
-        }
+        var at = ""
+        val frames = Frames.extract(
+            video.file, File(work, "frames"), maxFrames = 360, stepMs = 2000,
+            onPosition = { t, total -> at = " (${ComboViewModel.clock(t / 1000.0)} of ${ComboViewModel.clock(total / 1000.0)})" },
+        ) { progress("Finding the plays$at", 0.25f + it * 0.3f) }
         video.file.delete()
         if (frames.isEmpty()) throw IllegalStateException("No frames could be read from the video")
 
@@ -178,7 +180,7 @@ class ReplayViewModel(app: Application) : AndroidViewModel(app) {
         var sides = ""
         val batches = frames.chunked(6)
         batches.forEachIndexed { bi, batch ->
-            progress("Reading the games", 0.4f + 0.5f * bi / batches.size)
+            progress("Reading the games", 0.55f + 0.37f * bi / batches.size)
             val recent = events.map { "%.0fs %s %s %s %s".format(it.t, it.side, it.action, it.card, it.detail).trim() }
             val got = reader.readBatch(batch, candidates, hit.title, video.captions, recent, sides)
             events += got

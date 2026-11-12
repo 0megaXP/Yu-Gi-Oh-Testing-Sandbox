@@ -3,6 +3,7 @@ package com.ygosandbox.app.combos
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.media.MediaMetadataRetriever
+import android.os.Build
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -28,6 +29,8 @@ object Frames {
         maxFrames: Int = 300,
         /** Milliseconds between sampled frames; whole games use a sparser step than combos. */
         stepMs: Long = 1000,
+        /** Where it is in the video and the video's length, in milliseconds. */
+        onPosition: (Long, Long) -> Unit = { _, _ -> },
         onProgress: (Float) -> Unit,
     ): List<Frame> = withContext(Dispatchers.IO) {
         dir.mkdirs()
@@ -40,10 +43,15 @@ object Frames {
             var lastHash: LongArray? = null
             // the last frame of the current screen, kept too if it moved on a little (an animation settling)
             var settled: Pair<Double, Bitmap>? = null
+            // Exact frames mean decoding forward from the last keyframe, up to a second each on a
+            // phone. Whole games are sampled sparsely anyway, so they take the nearest keyframe:
+            // one decode per frame, many times faster.
+            val option = if (stepMs >= 2000) MediaMetadataRetriever.OPTION_CLOSEST_SYNC else MediaMetadataRetriever.OPTION_CLOSEST
+            val size = videoSize(mmr)
             var t = 0L
             while (t < ms) {
                 coroutineContext.ensureActive()
-                val raw = mmr.getFrameAtTime(t * 1000, MediaMetadataRetriever.OPTION_CLOSEST)
+                val raw = frameAt(mmr, t * 1000, option, size)
                 if (raw != null) {
                     val bmp = scale(raw)
                     val h = dhash(bmp)
@@ -57,6 +65,7 @@ object Frames {
                         settled = if (diff >= 3) t / 1000.0 to bmp else null
                     }
                 }
+                onPosition(t, ms)
                 onProgress(t.toFloat() / ms)
                 t += stepMs
             }
@@ -71,6 +80,21 @@ object Frames {
         } finally {
             mmr.release()
         }
+    }
+
+    private fun videoSize(mmr: MediaMetadataRetriever): Pair<Int, Int>? {
+        val w = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: return null
+        val h = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: return null
+        return if (w > 0 && h > 0) w to h else null
+    }
+
+    /** The frame at [us], decoded straight at the size used (no full-size bitmap) when Android allows it. */
+    private fun frameAt(mmr: MediaMetadataRetriever, us: Long, option: Int, size: Pair<Int, Int>?): Bitmap? {
+        if (Build.VERSION.SDK_INT >= 27 && size != null && size.first > WIDTH) {
+            val h = (size.second.toLong() * WIDTH / size.first).toInt()
+            return mmr.getScaledFrameAtTime(us, option, WIDTH, h)
+        }
+        return mmr.getFrameAtTime(us, option)
     }
 
     private fun scale(b: Bitmap): Bitmap {

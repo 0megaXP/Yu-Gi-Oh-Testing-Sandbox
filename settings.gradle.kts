@@ -11,6 +11,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // NewPipe Extractor (YouTube search and streams for the Combos tab) is published on JitPack.
+        maven("https://jitpack.io")
     }
 }
 

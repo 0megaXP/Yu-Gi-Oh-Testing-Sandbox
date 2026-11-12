@@ -38,6 +38,8 @@ android {
     }
 
     compileOptions {
+        // NewPipe Extractor uses java.nio APIs that need desugaring below Android 13.
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -65,6 +67,10 @@ dependencies {
 
     // Play engine: best lines, end boards and side plans (engine/ submodule).
     implementation(project(":ygoe"))
+
+    // Combos tab: YouTube search and video streams on the phone (GPL-3.0, compatible with the engine's AGPL).
+    implementation("com.github.teamnewpipe:NewPipeExtractor:v0.26.5")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.5")
 
     // Card pictures, cached on the phone after the first view.
     implementation("io.coil-kt:coil-compose:2.7.0")

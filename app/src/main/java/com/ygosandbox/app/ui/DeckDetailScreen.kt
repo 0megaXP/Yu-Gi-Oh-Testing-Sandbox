@@ -39,7 +39,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -60,6 +60,8 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.ygosandbox.app.AppViewModel
 import com.ygosandbox.app.UiState
+import com.ygosandbox.app.combos.ComboViewModel
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ygosandbox.app.data.Banlists
 import com.ygosandbox.app.model.CardGroup
 import com.ygosandbox.app.model.CardStat
@@ -79,6 +81,8 @@ fun DeckDetailScreen(ui: UiState, vm: AppViewModel, id: String) {
     var pagerStart by remember(id) { mutableStateOf<Int?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
     var viewing by remember(id) { mutableStateOf<SourceDeck?>(null) }
+    val combos: ComboViewModel = viewModel()
+    var comboCards by remember(id) { mutableStateOf<Pair<List<Long>, Int>?>(null) }
 
     val groupOf: (CardStat) -> CardGroup = { s -> vm.db.find(s.cardId)?.group ?: CardGroup.UNKNOWN }
     val engine = remember(deck, ui.dbRevision) { ordered(deck.cards.filter { it.engine }, groupOf) }
@@ -97,13 +101,18 @@ fun DeckDetailScreen(ui: UiState, vm: AppViewModel, id: String) {
             ui.searching?.let { SearchProgress(it, onCancel = { vm.cancelSearch() }) }
             Summary(deck)
             EditSearchPanel(deck, ui, vm)
-            TabRow(selectedTabIndex = tab) {
+            // scrollable: four tabs with counts don't fit a phone's width
+            ScrollableTabRow(selectedTabIndex = tab, edgePadding = 0.dp) {
                 Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Engine (${engine.size})") })
                 Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Non-engine (${nonEngine.size})") })
                 Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Decks (${deck.decks.size})") })
+                Tab(selected = tab == 3, onClick = { tab = 3 }, text = { Text("Combos") })
             }
-            if (tab == 2) SourceDeckList(deck.decks, onOpen = { viewing = it })
-            else CardSections(shown, vm, ui.dbRevision) { index -> pagerStart = index }
+            when (tab) {
+                2 -> SourceDeckList(deck.decks, onOpen = { viewing = it })
+                3 -> CombosTab(deck, vm, combos, openCards = { codes, i -> comboCards = codes to i })
+                else -> CardSections(shown, vm, ui.dbRevision) { index -> pagerStart = index }
+            }
         }
 
         pagerStart?.let { start ->
@@ -111,6 +120,12 @@ fun DeckDetailScreen(ui: UiState, vm: AppViewModel, id: String) {
                 shown.map { PagerItem(it.cardId, it.name, vm.db.find(it.cardId), it) }
             }
             CardPager(items, start, deck.format, onClose = { pagerStart = null })
+        }
+        comboCards?.let { (codes, start) ->
+            val items = remember(codes, ui.dbRevision) {
+                codes.map { c -> vm.db.find(c).let { PagerItem(c, it?.name ?: c.toString(), it) } }
+            }
+            CardPager(items, start, deck.format, onClose = { comboCards = null })
         }
         viewing?.let { d -> SourceDeckViewer(d, deck.format, vm, ui.dbRevision, ui.deckGrid, onClose = { viewing = null }) }
     }

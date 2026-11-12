@@ -44,7 +44,13 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
   Open a deck in the Decks tab to see its list and import it into My decks. Tap a card for its details; use the arrows for the previous or next one.
 - **Combos from videos** (test): the *Combos* tab of an archetype search result.
   - *Find combo videos* searches YouTube for "<archetype> combo". It keeps only titles that name the archetype, skips pack openings, tier lists and Shorts, and drops videos older than the chosen period (default: since the last banlist).
-  - For each video you tick, the app downloads it at up to 720p, keeps one frame per screen change, and has Claude read the cards and steps. The English captions and the description help when YouTube has them. The video is deleted afterwards; only the combo is kept.
+  - **Two ways to read:**
+    - **Free reading (default):** on-device text recognition (ML Kit, offline) reads the card names on screen frame by frame. That gives the cards in the order they were played. The engine's check then replays them by the rules from the opening hand, working out each step and the end board.
+      - The opening hand comes from the title and description, or else the first cards played.
+      - It works best with EDOPro and Master Duel videos.
+      - On engine-made test lines reduced to names, 7 of 16 verified, against 12 with Claude's full reading.
+    - **Claude reading:** reads every action, the hand and the end board, also from commentary and real tables. It uses your API key (paid). Replays always use Claude reading.
+  - For each video you tick, the app downloads it at up to 720p, keeps one frame per screen change, and reads it in the chosen way. The English captions and the description help when YouTube has them. The video is deleted afterwards; only the combo is kept.
   - **Deck-list check:** a video is left out as soon as its combo plays a card that none of the result's tournament lists play. Reading stops at that point, so the rest of the video isn't paid for. Cards that are only held in hand and hand traps the opponent shows don't count. A card that can't be identified also drops the video, because the check can't be done. Left-out videos are listed with the reason.
   - Videos ending on mostly the same field cards (60%) count as one line. Lines are sorted by how many videos show them, each with its end board, opening hand, interruptions, choke points and the steps. Tap a step's time to open the video there.
   - **Checked by the engine:** each kept line is replayed by the real rules from its opening hand, with the result's tournament list that plays most of its cards. A line is verified when most of its steps can be played and the replay reaches most of its end board; the tab shows the result per line, and *Check with the engine* redoes lines read before this existed.

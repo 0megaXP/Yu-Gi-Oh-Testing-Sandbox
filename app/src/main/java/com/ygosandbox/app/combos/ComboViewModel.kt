@@ -92,11 +92,12 @@ class ComboViewModel(app: Application) : AndroidViewModel(app) {
     fun read(deck: DeckAnalysis, db: CardDatabase, videos: List<VideoHit>, engine: suspend () -> YgoEngine) {
         if (job?.isActive == true || videos.isEmpty()) return
         val key = settings.apiKey
-        if (key.isBlank()) {
-            _ui.update { it.copy(runNote = "Add your Anthropic API key first.") }
+        // free reading needs no key; Claude reading does
+        if (!settings.freeReading && key.isBlank()) {
+            _ui.update { it.copy(runNote = "Add your Anthropic API key first, or switch to free reading.") }
             return
         }
-        val reader = ComboReader(key, settings.model)
+        val reader = if (settings.freeReading) null else ComboReader(key, settings.model)
         _ui.update { it.copy(runFor = deck.id, runNote = null, searchFor = null, hits = emptyList()) }
         job = BackgroundWork.launch(getApplication<Application>(), "combos", "Reading combo videos") {
             // the card name index is built here, off the main thread
@@ -188,8 +189,13 @@ class ComboViewModel(app: Application) : AndroidViewModel(app) {
             val res = engine().videoLines(list, listOf(VideoPieces.input(v)), seconds = 45.0, policy = store.load())
             store.save(res.policyJson)
             val l = res.lines.firstOrNull() ?: return v
-            v.copy(check = LineCheck(l.verified, l.stepsMatched, l.stepsChecked, l.boardMatch, l.problem,
+            val checked = v.copy(check = LineCheck(l.verified, l.stepsMatched, l.stepsChecked, l.boardMatch, l.problem,
                 if (l.verified) res.libraryJson else null))
+            // a free reading can't see the end board: a verified replay supplies it
+            if (v.endBoard.isEmpty() && l.verified)
+                checked.copy(endBoard = l.board.filter { !it.where.contains("hand", ignoreCase = true) }
+                    .map { BoardCard(it.code, it.name, it.where) })
+            else checked
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -206,10 +212,46 @@ class ComboViewModel(app: Application) : AndroidViewModel(app) {
         data class Dropped(val reason: String) : Outcome
     }
 
+    /**
+     * Free reading: card names found on screen by text recognition, in the order they appeared.
+     * The engine's check then replays them and works out the actions and the end board.
+     */
+    private suspend fun readFree(
+        hit: VideoHit,
+        video: PreparedVideo,
+        cn: CardNames,
+        allowed: Set<Long>,
+        progress: (String, Float) -> Unit,
+    ): Outcome {
+        val handTraps = HAND_TRAPS.mapNotNull { cn.resolve(it, emptySet()) }.map { cn.canonical(it) }.toSet()
+        val extra = allowed.filter { cn.isExtraDeck(it) }.toSet()
+        val r = FreeReader.read(video.frames, cn, allowed, handTraps, hit.title, video.description, extra) {
+            progress("Reading card names", 0.45f + 0.45f * it)
+        }
+        r.outside.firstOrNull()?.let { return Outcome.Dropped("Shows ${cn.name(it)}, which none of the deck lists play") }
+        if (r.sequence.size < 3)
+            return Outcome.Dropped("Too few card names could be read for free; Claude reading may do better on this video")
+        return Outcome.Kept(
+            VideoCombo(
+                url = hit.url, title = hit.title, uploader = hit.uploader, date = video.date.ifEmpty { hit.date },
+                going = "unknown",
+                hand = r.hand,
+                steps = r.sequence.map { (t, id) -> ComboStep(t, "use", id, cn.name(id), "") },
+                endBoard = emptyList(),
+                interruptions = emptyList(),
+                chokePoints = emptyList(),
+                uncertain = listOf(
+                    "Read for free: the steps are the cards in the order their names appeared on screen. The engine's " +
+                        "check works out what each one did and the end board.",
+                ),
+            )
+        )
+    }
+
     private suspend fun readOne(
         hit: VideoHit,
         work: VideoWork,
-        reader: ComboReader,
+        reader: ComboReader?,
         cn: CardNames,
         allowed: Set<Long>,
         candidates: List<String>,
@@ -217,6 +259,7 @@ class ComboViewModel(app: Application) : AndroidViewModel(app) {
     ): Outcome {
         val video = work.prepare(hit.url, "Finding the steps", 0.3f, 0.15f, stepMs = 1000, maxFrames = 300, progress = progress)
         val frames = video.frames
+        if (reader == null) return readFree(hit, video, cn, allowed, progress)
 
         fun notInLists(id: Long) = cn.canonical(id) !in allowed
 

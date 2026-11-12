@@ -72,6 +72,9 @@ dependencies {
     implementation("com.github.teamnewpipe:NewPipeExtractor:v0.26.5")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.5")
 
+    // Free combo reading: on-device text recognition (model bundled in the app, works offline).
+    implementation("com.google.mlkit:text-recognition:16.0.1")
+
     // Card pictures, cached on the phone after the first view.
     implementation("io.coil-kt:coil-compose:2.7.0")
 }

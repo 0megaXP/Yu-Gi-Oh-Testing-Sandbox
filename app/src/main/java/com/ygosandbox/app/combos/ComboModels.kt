@@ -108,6 +108,39 @@ class CardNames(private val db: CardDatabase) {
         return found
     }
 
+    /**
+     * A card from [pool] that [text] names, for text recognition: the whole text, a name inside it
+     * ("Activate Angelechy Problem?"), or close enough to one (misread letters). Null if none.
+     */
+    fun match(text: String, pool: Set<Long>, cutoff: Double): Long? {
+        val key = norm(text)
+        if (key.length < 4) return null
+        val names = preferPools.getOrPut(System.identityHashCode(pool)) { pool.associateBy { norm(name(it)) } }
+        names[key]?.let { return it }
+        names.entries.filter { it.key.length >= 8 && key.contains(it.key) }.maxByOrNull { it.key.length }?.let { return it.value }
+        // fuzzy: bigrams of the pool's names are counted once, and lengths far apart are skipped
+        val grams = poolGrams.getOrPut(System.identityHashCode(pool)) {
+            names.map { (n, id) -> Triple(n, n.windowed(2).groupingBy { it }.eachCount(), id) }
+        }
+        val mine = key.windowed(2).groupingBy { it }.eachCount()
+        var best: Long? = null
+        var bestScore = cutoff
+        for ((n, g, id) in grams) {
+            if (n.length < key.length * 0.7 || n.length > key.length * 1.4) continue
+            val common = mine.entries.sumOf { (k, c) -> minOf(c, g[k] ?: 0) }
+            val score = 2.0 * common / (key.length - 1 + n.length - 1)
+            if (score >= bestScore) { bestScore = score; best = id }
+        }
+        return best
+    }
+
+    private val poolGrams = java.util.concurrent.ConcurrentHashMap<Int, List<Triple<String, Map<String, Int>, Long>>>()
+
+    fun isExtraDeck(id: Long): Boolean = db.find(id)?.isExtraDeck == true
+
+    /** The card whose name is exactly [text] (any card), or null. */
+    fun exact(text: String): Long? = byNorm[norm(text)]
+
     private fun resolveUncached(text: String, prefer: Set<Long>): Long? {
         val key = norm(text)
         if (key.isEmpty()) return null
@@ -150,6 +183,11 @@ fun allowedCards(deck: DeckAnalysis, names: CardNames): Set<Long> {
 /** API key and model for reading videos, kept apart from the app's other settings. */
 class ComboSettings(context: Context) {
     private val prefs = context.getSharedPreferences("combos", Context.MODE_PRIVATE)
+
+    /** Read combo videos for free on the phone (text recognition) instead of with Claude. */
+    var freeReading: Boolean
+        get() = prefs.getBoolean("free_reading", true)
+        set(v) = prefs.edit().putBoolean("free_reading", v).apply()
 
     var apiKey: String
         get() = prefs.getString("api_key", "") ?: ""

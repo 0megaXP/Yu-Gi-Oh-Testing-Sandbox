@@ -72,13 +72,14 @@ fun CombosTab(deck: DeckAnalysis, vm: AppViewModel, cvm: ComboViewModel, openCar
     val lines = remember(lib) { lib?.let { Lines.group(it.videos) } ?: emptyList() }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var hasKey by remember { mutableStateOf(cvm.settings.apiKey.isNotBlank()) }
+    var free by remember { mutableStateOf(cvm.settings.freeReading) }
     var showDropped by rememberSaveable(deck.id) { mutableStateOf(false) }
     val busyHere = ui.runFor == deck.id && ui.run != null
     val busyElsewhere = ui.run != null && ui.runFor != deck.id
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item { InterruptionNote() }
-        if (!hasKey || showSettings) item {
+        if ((!free && !hasKey) || showSettings) item {
             KeyPanel(cvm, onDone = { showSettings = false; hasKey = cvm.settings.apiKey.isNotBlank() })
         }
         if (busyHere) item { RunPanel(ui.run!!, onStop = { cvm.stop() }) }
@@ -88,7 +89,8 @@ fun CombosTab(deck: DeckAnalysis, vm: AppViewModel, cvm: ComboViewModel, openCar
             if (ui.searchFor == deck.id && (ui.searching || ui.hits.isNotEmpty() || ui.searchError != null)) {
                 PickVideos(deck, vm, cvm, readUrls = lib?.readUrls ?: emptySet())
             } else {
-                FindPanel(deck, vm, cvm, enabled = !busyHere && !busyElsewhere && hasKey,
+                FindPanel(deck, vm, cvm, free = free, onFree = { cvm.settings.freeReading = it; free = it },
+                    enabled = !busyHere && !busyElsewhere && (free || hasKey),
                     onSettings = { showSettings = !showSettings })
             }
         }
@@ -165,7 +167,15 @@ private fun KeyPanel(cvm: ComboViewModel, onDone: () -> Unit) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun FindPanel(deck: DeckAnalysis, vm: AppViewModel, cvm: ComboViewModel, enabled: Boolean, onSettings: () -> Unit) {
+private fun FindPanel(
+    deck: DeckAnalysis,
+    vm: AppViewModel,
+    cvm: ComboViewModel,
+    free: Boolean,
+    onFree: (Boolean) -> Unit,
+    enabled: Boolean,
+    onSettings: () -> Unit,
+) {
     var period by rememberSaveable { mutableStateOf(Period.BANLIST) }
     val banlist = remember(deck.format) { Banlists.latest(deck.format, vm.settings.customBanlists(deck.format.name)) }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -175,6 +185,15 @@ private fun FindPanel(deck: DeckAnalysis, vm: AppViewModel, cvm: ComboViewModel,
                 FilterChip(selected = period == p, onClick = { period = p }, label = { Text(label) })
             }
         }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FilterChip(selected = free, onClick = { onFree(true) }, label = { Text("Free reading") })
+            FilterChip(selected = !free, onClick = { onFree(false) }, label = { Text("Claude reading") })
+        }
+        ComboNote(
+            if (free) "Free: card names are read on the phone and the engine works out the steps and the end board. " +
+                "Best with EDOPro or Master Duel videos."
+            else "Claude reads every action, the hand and the end board, also from commentary and real tables. Uses your API key (paid)."
+        )
         Row(verticalAlignment = Alignment.CenterVertically) {
             Button(
                 onClick = {

@@ -96,10 +96,23 @@ class CardNames(private val db: CardDatabase) {
     fun canonical(id: Long): Long = db.find(id)?.id ?: id
     fun name(id: Long): String = db.find(id)?.name ?: id.toString()
 
+    // Names repeat a lot while reading a video; the fuzzy match over every card is slow.
+    private val memo = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val preferPools = java.util.concurrent.ConcurrentHashMap<Int, Map<String, Long>>()
+
     fun resolve(text: String, prefer: Set<Long>): Long? {
+        val memoKey = System.identityHashCode(prefer).toString() + "|" + text
+        memo[memoKey]?.let { return if (it < 0) null else it }
+        val found = resolveUncached(text, prefer)
+        memo[memoKey] = found ?: -1L
+        return found
+    }
+
+    private fun resolveUncached(text: String, prefer: Set<Long>): Long? {
         val key = norm(text)
         if (key.isEmpty()) return null
-        val pools = listOf(prefer.associateBy { norm(name(it)) }, byNorm)
+        val preferPool = preferPools.getOrPut(System.identityHashCode(prefer)) { prefer.associateBy { norm(name(it)) } }
+        val pools = listOf(preferPool, byNorm)
         pools.forEachIndexed { i, pool ->
             pool[key]?.let { return it }
             val starts = pool.keys.filter { it.startsWith(key) }

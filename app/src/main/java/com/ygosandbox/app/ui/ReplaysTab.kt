@@ -70,6 +70,7 @@ fun ReplaysTab(deck: DeckAnalysis, vm: AppViewModel, rvm: ReplayViewModel, openC
     var showDropped by rememberSaveable(deck.id) { mutableStateOf(false) }
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { InterruptionNote() }
         if (!hasKey) item { ReplayNote("Add your Anthropic API key in the Combos tab (gear icon) to read matches.") }
         ui.run?.takeIf { busyHere }?.let { p ->
             item {
@@ -283,6 +284,21 @@ private fun TurnRow(vm: AppViewModel, t: TurnRecord, openCards: (List<Long>, Int
             t.interrupts.forEach { i ->
                 ReplayNote("${if (i.ours) "You" else "They"}: ${i.name}" + if (i.on.isNotBlank()) " on ${i.on}" else "")
             }
+        }
+    }
+}
+
+/** What happened to the last job that never finished (Android closed the app, or it crashed). */
+@Composable
+fun InterruptionNote() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var note by remember { mutableStateOf(com.ygosandbox.app.work.BackgroundWork.interruption(context)) }
+    val text = note ?: return
+    Surface(color = MaterialTheme.colorScheme.errorContainer, shape = MaterialTheme.shapes.medium) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("The last run stopped", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onErrorContainer)
+            Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
+            TextButton(onClick = { com.ygosandbox.app.work.BackgroundWork.dismissInterruption(context); note = null }) { Text("OK") }
         }
     }
 }

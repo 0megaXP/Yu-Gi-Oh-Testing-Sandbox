@@ -29,6 +29,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        BackgroundWork.install(this)
         if (savedInstanceState == null && BackgroundWork.needsNotificationPermission(this))
             askNotifications.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         setContent {

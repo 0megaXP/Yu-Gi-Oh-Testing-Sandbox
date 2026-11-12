@@ -102,6 +102,10 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
   - **Also covered:** the app update and card database downloads. An update downloaded while the phone is locked installs when you come back to the app, because Android only opens the installer while the app is on screen.
   - **Staying awake:** the service keeps the CPU and Wi-Fi awake, and video downloads resume after a dropped connection. The first time a long job starts, Android asks once whether the app may run without battery restrictions; say yes, or some phones' battery savers still stop it.
   - **When it still stops:** closing the app from the recent apps list stops engine jobs. Video reading carries on.
+  - **Interrupted runs:**
+    - **The next open tells you:** if Android closes the app mid-job or it crashes, the Combos and Replays tabs say so when you next open the app, with the stage it reached (and the error for a crash).
+    - **Reading resumes:** a video that didn't finish keeps its frames and the batches already read. Reading it again continues where it stopped, so nothing is downloaded or paid for twice.
+  - **Off the main thread:** all reading work runs off the app's main thread. Matching card names there used to freeze the app for seconds per batch, and Android silently kills a frozen app in the background.
 - **In-app updates** from this repository's GitHub releases.
 
 ### How cards are sorted

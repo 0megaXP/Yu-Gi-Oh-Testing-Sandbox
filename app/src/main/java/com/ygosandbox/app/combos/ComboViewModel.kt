@@ -97,11 +97,12 @@ class ComboViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val reader = ComboReader(key, settings.model)
-        val cn = names ?: CardNames(db).also { names = it }
-        val allowed = allowedCards(deck, cn)
-        val candidates = (allowed.map { cn.name(it) } + HAND_TRAPS).distinct()
         _ui.update { it.copy(runFor = deck.id, runNote = null, searchFor = null, hits = emptyList()) }
         job = BackgroundWork.launch(getApplication<Application>(), "combos", "Reading combo videos") {
+            // the card name index is built here, off the main thread
+            val cn = names ?: CardNames(db).also { names = it }
+            val allowed = allowedCards(deck, cn)
+            val candidates = (allowed.map { cn.name(it) } + HAND_TRAPS).distinct()
             var kept = 0
             var dropped = 0
             var failed = 0
@@ -111,9 +112,11 @@ class ComboViewModel(app: Application) : AndroidViewModel(app) {
                         _ui.update { it.copy(run = RunProgress(i + 1, videos.size, hit.title, stage, f)) }
                         BackgroundWork.update("combos", "${i + 1} of ${videos.size}: $stage\n${hit.title}", (i + f) / videos.size)
                     }
-                    val work = File(getApplication<Application>().cacheDir, "combo-video")
+                    val work = VideoWork(File(getApplication<Application>().filesDir, "video-work/combos"), hit.url)
                     try {
-                        when (val r = readOne(hit, work, reader, cn, allowed, candidates, ::progress)) {
+                        val r = readOne(hit, work, reader, cn, allowed, candidates, ::progress)
+                        work.clear()
+                        when (r) {
                             is Outcome.Kept -> {
                                 kept++
                                 progress("Checking with the engine", 0.97f)
@@ -129,8 +132,6 @@ class ComboViewModel(app: Application) : AndroidViewModel(app) {
                     } catch (e: Exception) {
                         failed++
                         _ui.update { it.copy(runNote = "Couldn't read \"${hit.title}\": ${e.message ?: e.javaClass.simpleName}") }
-                    } finally {
-                        work.deleteRecursively()
                     }
                 }
                 _ui.update { it.copy(runNote = summary(kept, dropped, failed) + (it.runNote?.let { n -> "\n$n" } ?: "")) }
@@ -207,24 +208,15 @@ class ComboViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun readOne(
         hit: VideoHit,
-        work: File,
+        work: VideoWork,
         reader: ComboReader,
         cn: CardNames,
         allowed: Set<Long>,
         candidates: List<String>,
         progress: (String, Float) -> Unit,
     ): Outcome {
-        work.deleteRecursively()
-        progress("Downloading", 0f)
-        val video = VideoSource.fetch(hit.url, work) { progress("Downloading", it * 0.3f) }
-        progress("Finding the steps", 0.3f)
-        var at = ""
-        val frames = Frames.extract(
-            video.file, File(work, "frames"),
-            onPosition = { t, total -> at = " (${clock(t / 1000.0)} of ${clock(total / 1000.0)})" },
-        ) { progress("Finding the steps$at", 0.3f + it * 0.15f) }
-        video.file.delete()
-        if (frames.isEmpty()) throw IllegalStateException("No frames could be read from the video")
+        val video = work.prepare(hit.url, "Finding the steps", 0.3f, 0.15f, stepMs = 1000, maxFrames = 300, progress = progress)
+        val frames = video.frames
 
         fun notInLists(id: Long) = cn.canonical(id) !in allowed
 
@@ -234,7 +226,18 @@ class ComboViewModel(app: Application) : AndroidViewModel(app) {
         batches.forEachIndexed { bi, batch ->
             progress("Reading the video", 0.45f + 0.45f * bi / batches.size)
             val recent = events.map { "%.0fs %s %s %s".format(it.t, it.action, it.card, it.detail).trim() }
-            val got = reader.readBatch(batch, candidates, hit.title, video.captions, recent)
+            // a batch read in an earlier, interrupted run isn't paid for again
+            val got = work.batch(bi)?.let { a ->
+                (0 until a.length()).map { k -> a.getJSONObject(k).let { e ->
+                    ComboReader.Event(e.optDouble("t"), e.optString("action"), e.optString("card"), e.optString("player"),
+                        e.optString("confidence"), e.optString("detail"))
+                } }
+            } ?: reader.readBatch(batch, candidates, hit.title, video.captions, recent).also { evs ->
+                work.saveBatch(bi, org.json.JSONArray(evs.map { e ->
+                    org.json.JSONObject().put("t", e.t).put("action", e.action).put("card", e.card).put("player", e.player)
+                        .put("confidence", e.confidence).put("detail", e.detail)
+                }))
+            }
             events += got
             got.firstOrNull { e ->
                 e.player == "combo" && e.confidence != "low" && e.card.isNotBlank() &&

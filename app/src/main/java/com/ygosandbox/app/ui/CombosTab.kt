@@ -77,6 +77,7 @@ fun CombosTab(deck: DeckAnalysis, vm: AppViewModel, cvm: ComboViewModel, openCar
     val busyElsewhere = ui.run != null && ui.runFor != deck.id
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { InterruptionNote() }
         if (!hasKey || showSettings) item {
             KeyPanel(cvm, onDone = { showSettings = false; hasKey = cvm.settings.apiKey.isNotBlank() })
         }

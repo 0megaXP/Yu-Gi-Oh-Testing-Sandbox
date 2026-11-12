@@ -85,11 +85,12 @@ class ReplayViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val reader = MatchReader(ComboReader(key, settings.model))
-        val cn = names ?: CardNames(db).also { names = it }
-        val allowed = allowedCards(deck, cn)
-        val candidates = (allowed.map { cn.name(it) } + ComboViewModel.HAND_TRAPS).distinct()
         _ui.update { it.copy(runFor = deck.id, runNote = null, searchFor = null, hits = emptyList()) }
         job = BackgroundWork.launch(getApplication<Application>(), "replays", "Reading match videos") {
+            // the card name index is built here, off the main thread
+            val cn = names ?: CardNames(db).also { names = it }
+            val allowed = allowedCards(deck, cn)
+            val candidates = (allowed.map { cn.name(it) } + ComboViewModel.HAND_TRAPS).distinct()
             var kept = 0
             var dropped = 0
             var failed = 0
@@ -99,9 +100,10 @@ class ReplayViewModel(app: Application) : AndroidViewModel(app) {
                         _ui.update { it.copy(run = RunProgress(i + 1, videos.size, hit.title, stage, f)) }
                         BackgroundWork.update("replays", "${i + 1} of ${videos.size}: $stage\n${hit.title}", (i + f) / videos.size)
                     }
-                    val work = File(getApplication<Application>().cacheDir, "replay-video")
+                    val work = VideoWork(File(getApplication<Application>().filesDir, "video-work/replays"), hit.url)
                     try {
                         val r = readOne(deck, hit, work, reader, cn, allowed, candidates, ::progress)
+                        work.clear()
                         val lib = library(deck.id)
                         when (r) {
                             is Result.Kept -> { kept++; save(lib.copy(matches = lib.matches.filter { it.url != hit.url } + r.match)) }
@@ -114,8 +116,6 @@ class ReplayViewModel(app: Application) : AndroidViewModel(app) {
                     } catch (e: Exception) {
                         failed++
                         _ui.update { it.copy(runNote = "Couldn't read \"${hit.title}\": ${e.message ?: e.javaClass.simpleName}") }
-                    } finally {
-                        work.deleteRecursively()
                     }
                 }
                 _ui.update { it.copy(runNote = summary(kept, dropped, failed) + (it.runNote?.let { n -> "\n$n" } ?: "")) }
@@ -141,25 +141,16 @@ class ReplayViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun readOne(
         deck: DeckAnalysis,
         hit: VideoHit,
-        work: File,
+        work: VideoWork,
         reader: MatchReader,
         cn: CardNames,
         allowed: Set<Long>,
         candidates: List<String>,
         progress: (String, Float) -> Unit,
     ): Result {
-        work.deleteRecursively()
-        progress("Downloading", 0f)
-        val video = VideoSource.fetch(hit.url, work) { progress("Downloading", it * 0.25f) }
-        progress("Finding the plays", 0.25f)
         // whole games: a frame every 2 s, at most 360 kept
-        var at = ""
-        val frames = Frames.extract(
-            video.file, File(work, "frames"), maxFrames = 360, stepMs = 2000,
-            onPosition = { t, total -> at = " (${ComboViewModel.clock(t / 1000.0)} of ${ComboViewModel.clock(total / 1000.0)})" },
-        ) { progress("Finding the plays$at", 0.25f + it * 0.3f) }
-        video.file.delete()
-        if (frames.isEmpty()) throw IllegalStateException("No frames could be read from the video")
+        val video = work.prepare(hit.url, "Finding the plays", 0.25f, 0.3f, stepMs = 2000, maxFrames = 360, progress = progress)
+        val frames = video.frames
 
         // Which of A / B plays the archetype: the side whose identified cards are mostly in the lists.
         val inLists = mutableMapOf("A" to 0, "B" to 0)
@@ -182,7 +173,18 @@ class ReplayViewModel(app: Application) : AndroidViewModel(app) {
         batches.forEachIndexed { bi, batch ->
             progress("Reading the games", 0.55f + 0.37f * bi / batches.size)
             val recent = events.map { "%.0fs %s %s %s %s".format(it.t, it.side, it.action, it.card, it.detail).trim() }
-            val got = reader.readBatch(batch, candidates, hit.title, video.captions, recent, sides)
+            // a batch read in an earlier, interrupted run isn't paid for again
+            val got = work.batch(bi)?.let { a ->
+                (0 until a.length()).map { k -> a.getJSONObject(k).let { e ->
+                    MatchReader.Event(e.optDouble("t"), e.optString("side"), e.optString("action"), e.optString("card"),
+                        e.optString("confidence"), e.optString("detail"))
+                } }
+            } ?: reader.readBatch(batch, candidates, hit.title, video.captions, recent, sides).also { evs ->
+                work.saveBatch(bi, org.json.JSONArray(evs.map { e ->
+                    org.json.JSONObject().put("t", e.t).put("side", e.side).put("action", e.action).put("card", e.card)
+                        .put("confidence", e.confidence).put("detail", e.detail)
+                }))
+            }
             events += got
             for (e in got) {
                 if (e.side !in inLists || e.card.isBlank() || e.confidence == "low") continue

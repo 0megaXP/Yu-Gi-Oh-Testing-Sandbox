@@ -35,8 +35,11 @@ import com.ygosandbox.app.MainActivity
 object BackgroundWork {
     data class Status(val title: String, val text: String, val progress: Float?, val stop: () -> Unit)
 
-    /** For jobs that must outlive the screen they started from. */
-    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    /**
+     * For jobs that must outlive the screen they started from. Off the main thread: a job that
+     * keeps the main thread busy for seconds gets the app killed in the background, silently.
+     */
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     internal val jobs = MutableStateFlow<Map<String, Status>>(emptyMap())
 
@@ -44,17 +47,78 @@ object BackgroundWork {
     fun start(context: Context, key: String, title: String, stop: () -> Unit) {
         val first = jobs.value.isEmpty()
         jobs.update { it + (key to Status(title, "Starting…", null, stop)) }
+        appContext = context.applicationContext
+        mark(title, "Starting")
         if (first) runCatching {
             ContextCompat.startForegroundService(context.applicationContext, Intent(context.applicationContext, WorkService::class.java))
         }
         askBatteryOnce(context.applicationContext)
     }
 
-    fun update(key: String, text: String, progress: Float?) =
+    fun update(key: String, text: String, progress: Float?) {
         jobs.update { m -> m[key]?.let { m + (key to it.copy(text = text, progress = progress)) } ?: m }
+        jobs.value[key]?.let { s ->
+            val now = System.currentTimeMillis()
+            if (now - lastMark > 5_000) mark(s.title, text)
+        }
+    }
 
     /** The job is over; the service stops when no job is left. */
-    fun finish(key: String) = jobs.update { it - key }
+    fun finish(key: String) {
+        jobs.update { it - key }
+        if (jobs.value.isEmpty()) appContext?.let { prefs(it).edit().remove("running").apply() }
+    }
+
+    // ---- what happened to a job that never finished (the app was killed, or crashed)
+
+    @Volatile private var appContext: Context? = null
+    @Volatile private var lastMark = 0L
+
+    private fun prefs(c: Context) = c.getSharedPreferences("background", Context.MODE_PRIVATE)
+
+    /** Notes the running job, so a run cut short by Android can be reported when the app opens again. */
+    private fun mark(title: String, text: String) {
+        val c = appContext ?: return
+        lastMark = System.currentTimeMillis()
+        prefs(c).edit().putString("running", "$title: ${text.replace('\n', ' ')}").apply()
+    }
+
+    /**
+     * Call once when the app starts: records crashes from now on, and turns a job left marked as
+     * running by a previous start (the app was closed mid-job) into a note for the user.
+     */
+    fun install(context: Context) {
+        val c = context.applicationContext
+        appContext = c
+        val p = prefs(c)
+        if (jobs.value.isEmpty()) p.getString("running", null)?.let { was ->
+            val crash = p.getString("crash", null)
+            val note = if (crash != null) "The app crashed during \"$was\".\nError: $crash"
+            else "Android closed the app during \"$was\". Allow YGO Sandbox to run without battery restrictions " +
+                "(Android settings → Apps → YGO Sandbox → Battery) and read it again: it continues where it stopped."
+            p.edit().putString("interrupted", note).remove("running").remove("crash").apply()
+        }
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        if (previous !is CrashRecorder) Thread.setDefaultUncaughtExceptionHandler(CrashRecorder(c, previous))
+    }
+
+    /** The note about the last interrupted job, if there is one. */
+    fun interruption(context: Context): String? = prefs(context).getString("interrupted", null)
+
+    fun dismissInterruption(context: Context) = prefs(context).edit().remove("interrupted").apply()
+
+    private class CrashRecorder(val c: Context, val next: Thread.UncaughtExceptionHandler?) : Thread.UncaughtExceptionHandler {
+        override fun uncaughtException(t: Thread, e: Throwable) {
+            runCatching {
+                val where = e.stackTrace.take(4).joinToString(" < ") { "${it.className.substringAfterLast('.')}.${it.methodName}:${it.lineNumber}" }
+                val p = c.getSharedPreferences("background", Context.MODE_PRIVATE)
+                // commit, not apply: the process is about to end
+                p.edit().putString("crash", "${e.javaClass.simpleName}: ${e.message ?: ""} ($where)")
+                    .putString("running", p.getString("running", null) ?: "the app").commit()
+            }
+            next?.uncaughtException(t, e)
+        }
+    }
 
     /** Runs [block] in [scope], held awake under [key] until it ends. */
     fun launch(context: Context, key: String, title: String, block: suspend () -> Unit): Job {

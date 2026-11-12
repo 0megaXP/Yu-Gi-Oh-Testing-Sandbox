@@ -85,6 +85,10 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
   - On your turn, the panel at the bottom lists every legal action or answer. Zone placement and other choices that never matter are made for you.
   - In bot vs bot you can show both hands and set cards.
   - The bot sees every card, including your hand.
+- **Background work:** long jobs keep running when you leave the app or turn the screen off.
+  - **Which jobs:** reading combo and match videos, checking lines with the engine, archetype searches, Play engine, combo tree, side plan and reference boards.
+  - **Notification:** a notification shows the progress and has a Stop button. On Android 13 and later, the app asks once to show notifications; the work runs either way.
+  - **When it still stops:** closing the app from the recent apps list stops engine jobs. Video reading carries on.
 - **In-app updates** from this repository's GitHub releases.
 
 ### How cards are sorted

@@ -216,7 +216,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             showMessage("Wait for the card database to finish downloading")
             return
         }
-        searchJob = viewModelScope.launch {
+        searchJob = keepAwake("Searching tournament decks") {
             _ui.update { it.copy(searching = "Starting…") }
             try {
                 val result = search.run(archetypes, excluded, format, span, banlistDates(format)) { p ->
@@ -433,6 +433,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var playJob: Job? = null
     private var sideJob: Job? = null
 
+    /**
+     * Like viewModelScope.launch, but held by the background-work service while it runs, so a
+     * long search or analysis carries on when the app is in the background (with a notification
+     * and a Stop button).
+     */
+    private fun keepAwake(title: String, block: suspend kotlinx.coroutines.CoroutineScope.() -> Unit): Job {
+        val key = "app:$title"
+        val job = viewModelScope.launch(block = block)
+        com.ygosandbox.app.work.BackgroundWork.start(getApplication<Application>(), key, title) { job.cancel() }
+        job.invokeOnCompletion { com.ygosandbox.app.work.BackgroundWork.finish(key) }
+        return job
+    }
+
     /** Opens the engine once; the first time it copies the card scripts into app storage. */
     suspend fun engine(): YgoEngine = engineLock.withLock {
         engine ?: run {
@@ -502,7 +515,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 threads = (Runtime.getRuntime().availableProcessors() - 1).coerceAtLeast(1),
             ),
         )
-        playJob = viewModelScope.launch {
+        playJob = keepAwake("Play engine is searching") {
             _ui.update { it.copy(play = it.play.copy(error = null, progress = com.ygoengine.Progress("starting", 0, 0))) }
             try {
                 val result = engine().analyze(request) { p -> _ui.update { it.copy(play = it.play.copy(progress = p)) } }
@@ -540,7 +553,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         val opponent = deckChoice(setup.opponentDeck)
         open(Screen.ComboTree)
-        treeJob = viewModelScope.launch {
+        treeJob = keepAwake("Building the combo tree") {
             _ui.update {
                 it.copy(play = it.play.copy(treeError = null, tree = null, treeSetup = setup,
                     treeProgress = com.ygoengine.Progress("starting", 0, 0)))
@@ -584,7 +597,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(play = it.play.copy(sideError = "Pick the opponent's deck")) }
             return
         }
-        sideJob = viewModelScope.launch {
+        sideJob = keepAwake("Building the side plan") {
             _ui.update {
                 it.copy(play = it.play.copy(sideError = null, sideResult = null, sideProgress = com.ygoengine.Progress("starting", 0, 0)))
             }
@@ -630,7 +643,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun buildReference(deckKey: String, thorough: Boolean) {
         if (refJob?.isActive == true) return
         val choice = deckChoice(deckKey) ?: return
-        refJob = viewModelScope.launch {
+        refJob = keepAwake("Building reference end boards") {
             _ui.update { it.copy(play = it.play.copy(refError = null, refProgress = com.ygoengine.Progress("starting", 0, 0))) }
             try {
                 val result = engine().reference(

@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import com.ygosandbox.app.work.BackgroundWork
 import java.io.File
 
 data class RunProgress(val video: Int, val videos: Int, val title: String, val stage: String, val fraction: Float)
@@ -38,10 +39,9 @@ data class CombosUi(
 class ComboViewModel(app: Application) : AndroidViewModel(app) {
     val settings = ComboSettings(app)
     private val store = ComboStore(app)
-    private val _ui = MutableStateFlow(CombosUi())
+    // process-wide: a read keeps running (and showing its progress) when the screen is left
+    private val _ui = shared
     val ui: StateFlow<CombosUi> = _ui
-    private var job: Job? = null
-    private var names: CardNames? = null
 
     fun library(deckId: String): ComboLibrary {
         _ui.value.libraries[deckId]?.let { return it }
@@ -101,14 +101,16 @@ class ComboViewModel(app: Application) : AndroidViewModel(app) {
         val allowed = allowedCards(deck, cn)
         val candidates = (allowed.map { cn.name(it) } + HAND_TRAPS).distinct()
         _ui.update { it.copy(runFor = deck.id, runNote = null, searchFor = null, hits = emptyList()) }
-        job = viewModelScope.launch {
+        job = BackgroundWork.launch(getApplication<Application>(), "combos", "Reading combo videos") {
             var kept = 0
             var dropped = 0
             var failed = 0
             try {
                 videos.forEachIndexed { i, hit ->
-                    fun progress(stage: String, f: Float) =
+                    fun progress(stage: String, f: Float) {
                         _ui.update { it.copy(run = RunProgress(i + 1, videos.size, hit.title, stage, f)) }
+                        BackgroundWork.update("combos", "${i + 1} of ${videos.size}: $stage\n${hit.title}", (i + f) / videos.size)
+                    }
                     val work = File(getApplication<Application>().cacheDir, "combo-video")
                     try {
                         when (val r = readOne(hit, work, reader, cn, allowed, candidates, ::progress)) {
@@ -149,11 +151,12 @@ class ComboViewModel(app: Application) : AndroidViewModel(app) {
         val todo = library(deck.id).videos.filter { again || it.check == null }
         if (todo.isEmpty()) return
         _ui.update { it.copy(runFor = deck.id, runNote = null) }
-        job = viewModelScope.launch {
+        job = BackgroundWork.launch(getApplication<Application>(), "combos", "Checking lines with the engine") {
             var verified = 0
             try {
                 todo.forEachIndexed { i, v ->
                     _ui.update { it.copy(run = RunProgress(i + 1, todo.size, v.title, "Checking with the engine", i.toFloat() / todo.size)) }
+                    BackgroundWork.update("combos", "${i + 1} of ${todo.size}: ${v.title}", i.toFloat() / todo.size)
                     val c = checkOne(deck, db, v, engine)
                     if (c.check?.verified == true) verified++
                     save(library(deck.id).let { l -> l.copy(videos = l.videos.map { if (it.url == v.url) c else it }) })
@@ -269,6 +272,10 @@ class ComboViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     companion object {
+        private val shared = MutableStateFlow(CombosUi())
+        private var job: Job? = null
+        private var names: CardNames? = null
+
         fun clock(t: Double): String = "%d:%02d".format(t.toInt() / 60, t.toInt() % 60)
 
         /** Shown in most combo videos as "what if they have X"; not part of any line. */

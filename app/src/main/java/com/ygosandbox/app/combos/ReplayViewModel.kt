@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import com.ygosandbox.app.work.BackgroundWork
 import java.io.File
 
 data class ReplaysUi(
@@ -33,10 +34,9 @@ data class ReplaysUi(
 class ReplayViewModel(app: Application) : AndroidViewModel(app) {
     val settings = ComboSettings(app)
     private val store = ReplayStore(app)
-    private val _ui = MutableStateFlow(ReplaysUi())
+    // process-wide: a read keeps running (and showing its progress) when the screen is left
+    private val _ui = shared
     val ui: StateFlow<ReplaysUi> = _ui
-    private var job: Job? = null
-    private var names: CardNames? = null
 
     fun library(deckId: String): ReplayLibrary {
         _ui.value.libraries[deckId]?.let { return it }
@@ -89,14 +89,16 @@ class ReplayViewModel(app: Application) : AndroidViewModel(app) {
         val allowed = allowedCards(deck, cn)
         val candidates = (allowed.map { cn.name(it) } + ComboViewModel.HAND_TRAPS).distinct()
         _ui.update { it.copy(runFor = deck.id, runNote = null, searchFor = null, hits = emptyList()) }
-        job = viewModelScope.launch {
+        job = BackgroundWork.launch(getApplication<Application>(), "replays", "Reading match videos") {
             var kept = 0
             var dropped = 0
             var failed = 0
             try {
                 videos.forEachIndexed { i, hit ->
-                    fun progress(stage: String, f: Float) =
+                    fun progress(stage: String, f: Float) {
                         _ui.update { it.copy(run = RunProgress(i + 1, videos.size, hit.title, stage, f)) }
+                        BackgroundWork.update("replays", "${i + 1} of ${videos.size}: $stage\n${hit.title}", (i + f) / videos.size)
+                    }
                     val work = File(getApplication<Application>().cacheDir, "replay-video")
                     try {
                         val r = readOne(deck, hit, work, reader, cn, allowed, candidates, ::progress)
@@ -244,5 +246,11 @@ class ReplayViewModel(app: Application) : AndroidViewModel(app) {
                 lessons = if (side == "A") raw.lessonsA else raw.lessonsB,
             )
         )
+    }
+
+    companion object {
+        private val shared = MutableStateFlow(ReplaysUi())
+        private var job: Job? = null
+        private var names: CardNames? = null
     }
 }

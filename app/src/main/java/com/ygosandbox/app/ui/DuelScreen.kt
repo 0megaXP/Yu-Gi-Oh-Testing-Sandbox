@@ -97,6 +97,7 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.unit.IntOffset
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlin.math.PI
 import kotlin.math.roundToInt
@@ -779,18 +780,25 @@ private fun MoveOverlay(
 ) {
     val flights = remember { mutableStateListOf<Flight>() }
     val effects = remember { mutableStateListOf<ActivationFx>() }
+    // Activations still showing from the previous update: new ones wait for them instead of cutting them off.
+    var busyUntil by remember { mutableStateOf(0L) }
     var origin by remember { mutableStateOf(Offset.Zero) }
     var nextId by remember { mutableStateOf(0L) }
     LaunchedEffect(d.moveBatch) {
         flights.clear()
-        effects.clear()
         if (d.moveBatch == 0) return@LaunchedEffect
         // Let the new board lay out first, so every place has its current position.
         delay(16)
+        val now = System.currentTimeMillis()
+        val wait = (busyUntil - now).coerceAtLeast(0L)
         val times = timeline(d.moves, d.activations)
         times.activations.forEach { (a, start) ->
-            effects += ActivationFx(nextId++, a.code, a.place.player, spots.find(a.place), start)
+            effects += ActivationFx(nextId++, a.code, a.place.player, spots.find(a.place), wait + start)
         }
+        // Tell the duel when this update's animations are over, so the next bot move waits for them.
+        val end = wait + times.endMs + PRELOAD_SLACK_MS
+        busyUntil = now + wait + (times.activations.maxOfOrNull { it.second + ACTIVATION_MS } ?: 0L)
+        vm.duelAnimationsUntil = now + end
         plan(d.moves).forEachIndexed { i, p ->
             val from = spots.find(p.move.from)
             val to = spots.find(p.move.to)
@@ -798,7 +806,7 @@ private fun MoveOverlay(
                 pending.land(p.waitKey) // nothing to animate: show the card right away
                 return@forEachIndexed
             }
-            flights += Flight(nextId++, p.move.code, hidden(p.move, canSee), from, to, times.moveStarts[i], p.waitKey)
+            flights += Flight(nextId++, p.move.code, hidden(p.move, canSee), from, to, wait + times.moveStarts[i], p.waitKey)
         }
     }
     val width = spots.slotWidth - 8.dp
@@ -822,7 +830,14 @@ private fun MoveOverlay(
 private class ActivationFx(val id: Long, val code: Long, val player: Int, val spot: Rect?, val delayMs: Long)
 
 /** When each move and activation of an update starts, so they play in the order they happened. */
-private class Timeline(val moveStarts: LongArray, val activations: List<Pair<DuelActivation, Long>>)
+private class Timeline(val moveStarts: LongArray, val activations: List<Pair<DuelActivation, Long>>) {
+    /** When the last animation of the update ends. */
+    val endMs: Long
+        get() = maxOf(
+            moveStarts.maxOrNull()?.plus(FLIGHT_MS) ?: 0L,
+            activations.maxOfOrNull { it.second + ACTIVATION_MS } ?: 0L,
+        )
+}
 
 /**
  * Lays the update's moves and activations on one timeline: moves start a little apart, and an
@@ -855,6 +870,8 @@ private fun timeline(moves: List<DuelMove>, activations: List<DuelActivation>): 
 }
 
 private const val MAX_ACTIVATIONS = 6
+/** Extra time an activation may wait for its card picture to download. */
+private const val PRELOAD_SLACK_MS = 600L
 private const val ACTIVATION_MS = 950
 private const val ACTIVATION_GAP_MS = 650L
 
@@ -866,8 +883,20 @@ private const val ACTIVATION_GAP_MS = 650L
 private fun ActivationEffect(fx: ActivationFx, origin: Offset, color: Color, vm: AppViewModel, onDone: () -> Unit) {
     val progress = remember { Animatable(0f) }
     var started by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val big = vm.db.find(fx.code)?.imageUrl() ?: "https://images.ygoprodeck.com/images/cards/${fx.code}.jpg"
+    val small = vm.db.find(fx.code)?.imageUrl(small = true) ?: "https://images.ygoprodeck.com/images/cards_small/${fx.code}.jpg"
     LaunchedEffect(fx.id) {
+        // Start downloading the large picture now, so it's ready when the card pops up.
+        val loader = coil.Coil.imageLoader(context)
+        val preload = async {
+            kotlinx.coroutines.withTimeoutOrNull(4000) {
+                loader.execute(coil.request.ImageRequest.Builder(context).data(big).build())
+            }
+        }
         delay(fx.delayMs)
+        // Give a slow download a little longer; the small picture covers it otherwise.
+        kotlinx.coroutines.withTimeoutOrNull(PRELOAD_SLACK_MS) { preload.await() }
         started = true
         progress.animateTo(1f, tween(ACTIVATION_MS, easing = androidx.compose.animation.core.LinearEasing))
         onDone()
@@ -912,8 +941,11 @@ private fun ActivationEffect(fx: ActivationFx, origin: Offset, color: Color, vm:
                 .border(3.dp, color, RoundedCornerShape(6.dp))
                 .clip(RoundedCornerShape(6.dp)),
         ) {
+            // The small picture is usually cached already (it's on the board); the large one draws over it.
+            Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(0xFF5B3A1E), Color(0xFF2E1B0E)))))
+            AsyncImage(model = small, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             AsyncImage(
-                model = vm.db.find(fx.code)?.imageUrl() ?: "https://images.ygoprodeck.com/images/cards/${fx.code}.jpg",
+                model = big,
                 contentDescription = vm.db.find(fx.code)?.name,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),

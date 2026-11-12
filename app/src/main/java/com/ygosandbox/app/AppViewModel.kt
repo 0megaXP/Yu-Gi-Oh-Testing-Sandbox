@@ -743,6 +743,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** When the board's current animations end (clock millis); set by the duel screen. */
+    @Volatile var duelAnimationsUntil = 0L
+
+    /** Waits until the board has shown the last update's moves and activations (at most a few seconds). */
+    private suspend fun awaitDuelAnimations() {
+        delay(60) // let the screen pick up the new state and plan its animations
+        val limit = System.currentTimeMillis() + 6000
+        while (System.currentTimeMillis() < minOf(duelAnimationsUntil, limit)) delay(40)
+    }
+
     private suspend fun playDuel(duel: LiveDuel) {
         while (true) {
             val d = _ui.value.duel
@@ -761,7 +771,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (_ui.value.duel.paused) {
                     kotlinx.coroutines.flow.combine(_ui, stepRequests) { u, s -> !u.duel.paused || s != steps }.first { it }
                 }
-                if (!_ui.value.duel.paused) delay(_ui.value.duel.setup.delayMs)
+                if (!_ui.value.duel.paused) {
+                    // Let activations and moving cards finish before the next bot move.
+                    awaitDuelAnimations()
+                    delay(_ui.value.duel.setup.delayMs)
+                }
                 updateDuel { it.copy(thinking = true) }
                 try {
                     duel.botMove(_ui.value.duel.levels[decision.player])

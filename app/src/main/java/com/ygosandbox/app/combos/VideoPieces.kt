@@ -36,13 +36,13 @@ object VideoPieces {
     )
 
     /**
-     * The combo pieces of every verified video line that [cards] (a deck's Main + Extra Deck)
+     * The combo pieces of every verified video line (and the played start of partly verified ones) that [cards] (a deck's Main + Extra Deck)
      * can play: each piece's starting-hand cards must all be in the deck. Null if there are none.
      */
     fun libraryFor(store: ComboStore, cards: Set<Long>, canonical: (Long) -> Long): String? {
         val deck = cards.map(canonical).toSet()
         val out = JSONArray()
-        store.all().flatMap { it.videos }.mapNotNull { it.check?.takeIf { c -> c.verified }?.library }.forEach { text ->
+        store.all().flatMap { it.videos }.mapNotNull { it.check?.library }.forEach { text ->
             val arr = runCatching { JSONArray(text) }.getOrNull() ?: return@forEach
             for (i in 0 until arr.length()) {
                 val piece = arr.getJSONObject(i)

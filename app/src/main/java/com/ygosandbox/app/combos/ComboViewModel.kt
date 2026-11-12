@@ -190,7 +190,7 @@ class ComboViewModel(app: Application) : AndroidViewModel(app) {
             store.save(res.policyJson)
             val l = res.lines.firstOrNull() ?: return v
             val checked = v.copy(check = LineCheck(l.verified, l.stepsMatched, l.stepsChecked, l.boardMatch, l.problem,
-                if (l.verified) res.libraryJson else null))
+                if (l.verified || l.verifiedSteps > 0) res.libraryJson else null, l.verifiedSteps, l.stepMatch))
             // a free reading can't see the end board: a verified replay supplies it
             if (v.endBoard.isEmpty() && l.verified)
                 checked.copy(endBoard = l.board.filter { !it.where.contains("hand", ignoreCase = true) }

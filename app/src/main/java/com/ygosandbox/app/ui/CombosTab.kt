@@ -304,12 +304,15 @@ private fun LineCard(vm: AppViewModel, cvm: ComboViewModel, deckId: String, line
                 Icon(if (showSteps) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null)
             }
             if (showSteps) {
+                val marks = v.check?.stepMatch.orEmpty()
+                if (marks.isNotEmpty()) ComboNote("✓ played by the rules · ⚠ couldn't be played there")
                 v.steps.forEachIndexed { i, s ->
+                    val mark = when (marks.getOrNull(i)) { 1 -> "✓ "; 0 -> "⚠ "; else -> "" }
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         s.code?.let { code -> CardThumbnail(vm, code, width = 28) { openCards(listOf(code), 0) } }
                             ?: Spacer(Modifier.width(28.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("${i + 1}. ${s.action.replace('_', ' ').replaceFirstChar { it.uppercase() }}: ${s.name}",
+                            Text("$mark${i + 1}. ${s.action.replace('_', ' ').replaceFirstChar { it.uppercase() }}: ${s.name}",
                                 style = MaterialTheme.typography.bodyMedium)
                             if (s.detail.isNotBlank()) ComboNote(s.detail)
                         }
@@ -333,17 +336,21 @@ private fun LineCard(vm: AppViewModel, cvm: ComboViewModel, deckId: String, line
 @Composable
 private fun CheckBadge(line: ComboLine) {
     val checks = line.videos.mapNotNull { it.check }
-    val best = checks.firstOrNull { it.verified } ?: checks.maxByOrNull { it.stepsMatched }
+    val best = checks.firstOrNull { it.verified } ?: checks.maxByOrNull { it.verifiedSteps * 1000 + it.stepsMatched }
     val text = when {
         best == null -> "Not checked by the engine yet"
         best.verified -> "✓ Played by the engine: ${best.stepsMatched} of ${best.stepsChecked} steps, " +
             "${(best.boardMatch * 100).toInt()}% of the end board"
+        best.partly -> "◐ Partly played by the engine: the first ${best.verifiedSteps} of ${best.stepsChecked} steps follow " +
+            "the rules, ${best.stepsMatched} in all. The video's order breaks after that (often a chain clicked out of order); " +
+            "the played start still teaches the engine"
         else -> "Not verified: ${best.problem}"
     }
     Text(
         text, style = MaterialTheme.typography.bodySmall,
         color = when {
             best?.verified == true -> MaterialTheme.colorScheme.tertiary
+            best?.partly == true -> MaterialTheme.colorScheme.secondary
             best == null -> MaterialTheme.colorScheme.onSurfaceVariant
             else -> MaterialTheme.colorScheme.error
         },

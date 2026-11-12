@@ -22,9 +22,15 @@ data class LineCheck(
     val boardMatch: Double,
     /** Why it didn't verify; "" when it did. */
     val problem: String,
-    /** The line's combo pieces as the engine's JSON array, null unless verified. */
+    /** The line's combo pieces as the engine's JSON array: of the whole line when verified, of its played start when partly verified. */
     val library: String?,
-)
+    /** Steps played by the rules from the start (all when verified, the first ones when partly verified). */
+    val verifiedSteps: Int = 0,
+    /** Per step: 1 played by the rules, 0 not played, -1 not checked. */
+    val stepMatch: List<Int> = emptyList(),
+) {
+    val partly get() = !verified && verifiedSteps > 0
+}
 
 /** A combo read from one video that passed the deck-list check. */
 data class VideoCombo(
@@ -299,6 +305,7 @@ class ComboStore(context: Context) {
                     JSONObject().put("verified", c.verified).put("stepsMatched", c.stepsMatched)
                         .put("stepsChecked", c.stepsChecked).put("boardMatch", c.boardMatch).put("problem", c.problem)
                         .put("library", c.library ?: JSONObject.NULL)
+                        .put("verifiedSteps", c.verifiedSteps).put("stepMatch", JSONArray(c.stepMatch))
                 } ?: JSONObject.NULL)
         }))
         .put("dropped", JSONArray(lib.dropped.map { JSONObject().put("url", it.url).put("title", it.title).put("reason", it.reason) }))
@@ -326,6 +333,8 @@ class ComboStore(context: Context) {
                         c.optBoolean("verified"), c.optInt("stepsMatched"), c.optInt("stepsChecked"),
                         c.optDouble("boardMatch", 0.0), c.optString("problem"),
                         if (c.isNull("library")) null else c.optString("library"),
+                        c.optInt("verifiedSteps"),
+                        c.optJSONArray("stepMatch")?.let { a -> (0 until a.length()).map { a.getInt(it) } } ?: emptyList(),
                     )
                 },
             )

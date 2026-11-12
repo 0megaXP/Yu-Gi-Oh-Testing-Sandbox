@@ -87,6 +87,7 @@ fun SandboxApp(vm: AppViewModel) {
                     is Screen.SidePlan -> SidePlanScreen(ui, vm, s.deckId)
                     Screen.Duel -> DuelScreen(ui, vm)
                     is Screen.Reference -> ReferenceScreen(ui, vm, s.deckKey)
+                    Screen.ComboTree -> ComboTreeScreen(ui, vm)
                     Screen.Settings -> SettingsScreen(ui, vm)
                 }
             }

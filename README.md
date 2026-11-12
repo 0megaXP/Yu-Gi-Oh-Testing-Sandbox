@@ -48,6 +48,9 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
   - **Practice** sees both hands; leave theirs empty for a random one per sample. **Real play** knows only your hand and samples theirs from their list.
   - The engine plays the real card rules (ygopro-core with the EDOPro scripts). It shows the top lines with their steps, the end board, what that board can stop against this opponent, and the opponent's strongest reply found when they play their turn against it.
   - Searches can be stopped early and keep what they found. Cards EDOPro can't play yet are listed.
+- **Combo tree** (test): on the Play engine screen, *Combo tree vs hand traps*.
+  - For your hand going first, the engine shows the main line, then for each hand trap the opponent is likely to have where it hurts that line most and how to continue from there, with the board you still reach.
+  - The hand traps come from the opponent's list if you picked one (non-engine cards that interrupt from the hand, Main Deck copies first), otherwise the most played: Ash, Veiler, Imperm, Ogre, Droll, Nibiru, Fuwalos, Ghost Belle.
 - **Reference end boards** (test): from a deck's Analysis page.
   - The engine plays 12 (quick) or 30 (thorough) random opening hands going first, with no interaction from the opponent, and keeps the best board it finds for each.
   - The screen shows the median and best board value, the typical end-board cards (share of boards with each card), and every board with its hand and line.

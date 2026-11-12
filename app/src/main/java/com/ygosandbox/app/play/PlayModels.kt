@@ -74,6 +74,12 @@ data class PlayState(
     val sideProgress: Progress? = null,
     val sideResult: SideResult? = null,
     val sideError: String? = null,
+    // Combo tree
+    val treeProgress: Progress? = null,
+    val tree: com.ygoengine.ComboTree? = null,
+    /** The setup the tree belongs to. */
+    val treeSetup: PlaySetup? = null,
+    val treeError: String? = null,
     // Reference end boards
     val refProgress: Progress? = null,
     val refError: String? = null,

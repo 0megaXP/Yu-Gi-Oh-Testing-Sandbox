@@ -132,6 +132,7 @@ fun EngineProgress(p: Progress, preparing: Boolean, onStop: () -> Unit) {
                 p.phase.startsWith("verify") -> "Playing their turn against line ${p.phase.removePrefix("verify ")}…"
                 p.phase == "simulate" -> "Simulating their opening turns… ${p.done} / ${p.total}"
                 p.phase == "reference" -> "Building reference boards… hand ${(p.done + 1).coerceAtMost(p.total)} of ${p.total}"
+                p.phase.startsWith("tree: ") -> "Combo tree: ${p.phase.removePrefix("tree: ")}… (${p.done + 1}/${p.total})"
                 else -> "Starting…"
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -238,7 +239,19 @@ fun PlayScreen(ui: UiState, vm: AppViewModel) {
                         play.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
                         val p = play.progress
                         if (p != null) EngineProgress(p, play.preparing, onStop = { vm.stopPlay() })
-                        else Button(onClick = { vm.runPlay() }, modifier = Modifier.fillMaxWidth()) { Text("Find best plays") }
+                        else {
+                            Button(onClick = { vm.runPlay() }, modifier = Modifier.fillMaxWidth()) { Text("Find best plays") }
+                            androidx.compose.material3.OutlinedButton(
+                                onClick = { vm.runComboTree() }, modifier = Modifier.fillMaxWidth(),
+                            ) { Text("Combo tree vs hand traps") }
+                            Text(
+                                "Combo tree: your main line going first, then where each hand trap " +
+                                    (if (theirs != null) "in their list" else "players use most") +
+                                    " hurts it and how to continue. The opponent's deck is optional here.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
                 val result = play.result
@@ -456,7 +469,7 @@ private fun LineCard(
 }
 
 @Composable
-private fun BoardRow(vm: AppViewModel, cards: List<EngineCard>, onOpen: (List<Long>, Int) -> Unit) {
+internal fun BoardRow(vm: AppViewModel, cards: List<EngineCard>, onOpen: (List<Long>, Int) -> Unit) {
     val codes = cards.map { it.code }
     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         itemsIndexed(cards) { i, c ->
@@ -474,7 +487,7 @@ private fun BoardRow(vm: AppViewModel, cards: List<EngineCard>, onOpen: (List<Lo
 }
 
 @Composable
-private fun Toggle(text: String, open: Boolean, onClick: () -> Unit) {
+internal fun Toggle(text: String, open: Boolean, onClick: () -> Unit) {
     Row(Modifier.clickable(onClick = onClick).padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(if (open) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null, tint = MaterialTheme.colorScheme.primary)
         Text(text, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
@@ -483,7 +496,7 @@ private fun Toggle(text: String, open: Boolean, onClick: () -> Unit) {
 
 /** Numbered steps. Lines starting with [otherPrefix] belong to the other player and are dimmed. */
 @Composable
-private fun Steps(steps: List<String>, otherPrefix: String, mineIsOther: Boolean = false) {
+internal fun Steps(steps: List<String>, otherPrefix: String, mineIsOther: Boolean = false) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         steps.forEachIndexed { i, s ->
             val other = s.startsWith(otherPrefix)

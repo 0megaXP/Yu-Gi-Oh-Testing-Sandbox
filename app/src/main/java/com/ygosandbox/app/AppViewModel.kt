@@ -59,6 +59,7 @@ sealed interface Screen {
     data object Duel : Screen
     /** Reference end boards for a deck choice key ("my:<id>" or "src:<search>:<index>"). */
     data class Reference(val deckKey: String) : Screen
+    data object ComboTree : Screen
     data object Settings : Screen
 }
 
@@ -509,6 +510,52 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { it.copy(play = it.play.copy(error = "The engine failed: ${e.message ?: e.toString()}")) }
             } finally {
                 _ui.update { it.copy(play = it.play.copy(progress = null)) }
+            }
+        }
+    }
+
+    // ---------- Combo tree ----------
+
+    private var treeJob: Job? = null
+
+    /** Main line for your hand going first, and how to continue after each likely hand trap. */
+    fun runComboTree() {
+        if (treeJob?.isActive == true) {
+            open(Screen.ComboTree)
+            return
+        }
+        val setup = _ui.value.play.setup
+        val mine = deckChoice(setup.myDeck)
+        val problem = when {
+            mine == null -> "Pick your deck"
+            setup.myHand.size != HAND_SIZE -> "Pick your $HAND_SIZE-card hand (or tap Random)"
+            else -> null
+        }
+        if (problem != null) {
+            _ui.update { it.copy(play = it.play.copy(error = problem)) }
+            return
+        }
+        val opponent = deckChoice(setup.opponentDeck)
+        open(Screen.ComboTree)
+        treeJob = viewModelScope.launch {
+            _ui.update {
+                it.copy(play = it.play.copy(treeError = null, tree = null, treeSetup = setup,
+                    treeProgress = com.ygoengine.Progress("starting", 0, 0)))
+            }
+            try {
+                val tree = engine().comboTree(
+                    mine!!.toEngine(), setup.myHand, opponent?.toEngine(),
+                    iterations = setup.depth.iterations,
+                    branchIterations = (setup.depth.iterations / 6).coerceIn(150, 800),
+                    seed = System.currentTimeMillis(),
+                ) { p -> _ui.update { it.copy(play = it.play.copy(treeProgress = p)) } }
+                _ui.update { it.copy(play = it.play.copy(tree = tree)) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _ui.update { it.copy(play = it.play.copy(treeError = "The engine failed: ${e.message ?: e.toString()}")) }
+            } finally {
+                _ui.update { it.copy(play = it.play.copy(treeProgress = null)) }
             }
         }
     }

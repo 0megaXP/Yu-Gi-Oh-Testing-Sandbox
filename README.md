@@ -49,7 +49,8 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
       - The opening hand comes from the title and description, or else the first cards played.
       - It works best with EDOPro and Master Duel videos.
       - On engine-made test lines reduced to names, 7 of 16 verified, against 12 with Claude's full reading.
-    - **Claude reading:** reads every action, the hand and the end board, also from commentary and real tables. It uses your API key (paid). Replays always use Claude reading.
+    - **Duel logs:** videos that show a duel log (Duelingbook, Dueling Nexus…) are read from it. A line with an action word and a card gives the real action, and a "Player:" prefix gives who did it. Otherwise the cards come in the order their names appeared.
+    - **Claude reading:** reads every action, the hand and the end board, also from commentary and real tables. It uses your API key (paid).
   - For each video you tick, the app downloads it at up to 720p, keeps one frame per screen change, and reads it in the chosen way. The English captions and the description help when YouTube has them. The video is deleted afterwards; only the combo is kept.
   - **Deck-list check:** a video is left out as soon as its combo plays a card that none of the result's tournament lists play. Reading stops at that point, so the rest of the video isn't paid for. Cards that are only held in hand and hand traps the opponent shows don't count. A card that can't be identified also drops the video, because the check can't be done. Left-out videos are listed with the reason.
   - Videos ending on mostly the same field cards (60%) count as one line. Lines are sorted by how many videos show them, each with its end board, opening hand, interruptions, choke points and the steps. Tap a step's time to open the video there.
@@ -63,7 +64,10 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
   - The side playing the archetype is found from the cards each player uses. The match is left out as soon as that side plays a card none of the result's lists play, or if neither side can be told apart.
   - Each match shows the result vs the opponent's deck, and every game with who went first and who won. Every turn has a one-line summary, the end board and the interruptions used (yours highlighted), plus turning points, side deck changes and takeaways.
   - At the top, the record across the read matches: going first and second, and per opponent.
-  - Uses the same API key as the Combos tab. A 20-minute match costs roughly what 300 images do.
+  - **Free or Claude reading,** with the same switch as Combos.
+    - **Free with a duel log naming both players** (Duelingbook and the like): the side playing the archetype, turns, games and results come from the log, and the deck-list rule applies to that side.
+    - **Free without such a log:** a timeline of the cards shown, in order, with a link to each moment.
+    - **Claude reading** uses the same API key as the Combos tab. A 20-minute match costs roughly what 300 images do.
 - **Play engine** (test): finds the best plays for an opening hand against a real deck.
   - Pick your deck and the opponent's deck from My decks or any tournament list saved by an Archetype search.
   - Choose going first or second, your 5-card hand (pick or random) and a search depth.

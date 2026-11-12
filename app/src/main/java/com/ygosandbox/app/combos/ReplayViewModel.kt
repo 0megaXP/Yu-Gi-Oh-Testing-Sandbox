@@ -80,11 +80,11 @@ class ReplayViewModel(app: Application) : AndroidViewModel(app) {
     fun read(deck: DeckAnalysis, db: CardDatabase, videos: List<VideoHit>) {
         if (job?.isActive == true || videos.isEmpty()) return
         val key = settings.apiKey
-        if (key.isBlank()) {
-            _ui.update { it.copy(runNote = "Add your Anthropic API key first (Combos tab).") }
+        if (!settings.freeReading && key.isBlank()) {
+            _ui.update { it.copy(runNote = "Add your Anthropic API key first (Combos tab), or switch to free reading.") }
             return
         }
-        val reader = MatchReader(ComboReader(key, settings.model))
+        val reader = if (settings.freeReading) null else MatchReader(ComboReader(key, settings.model))
         _ui.update { it.copy(runFor = deck.id, runNote = null, searchFor = null, hits = emptyList()) }
         job = BackgroundWork.launch(getApplication<Application>(), "replays", "Reading match videos") {
             // the card name index is built here, off the main thread
@@ -138,11 +138,100 @@ class ReplayViewModel(app: Application) : AndroidViewModel(app) {
         data class Dropped(val reason: String) : Result
     }
 
+    /**
+     * Free reading of a match. With a duel log naming both players (Duelingbook and the like): the
+     * side playing the archetype, turns, games and results from the log. Without one: a timeline
+     * of the cards shown, in order.
+     */
+    private suspend fun readFree(
+        deck: DeckAnalysis,
+        hit: VideoHit,
+        video: PreparedVideo,
+        cn: CardNames,
+        allowed: Set<Long>,
+        progress: (String, Float) -> Unit,
+    ): Result {
+        val handTraps = ComboViewModel.HAND_TRAPS.mapNotNull { cn.resolve(it, emptySet()) }.map { cn.canonical(it) }.toSet()
+        val extra = allowed.filter { cn.isExtraDeck(it) }.toSet()
+        val r = FreeReader.read(video.frames, cn, allowed, handTraps, hit.title, video.description, extra) {
+            progress("Reading the games", 0.55f + 0.4f * it)
+        }
+        val base = MatchReplay(
+            url = hit.url, title = hit.title, uploader = hit.uploader, date = video.date.ifEmpty { hit.date },
+            format = "", opponent = "", games = emptyList(), sideChanges = emptyList(), lessons = emptyList(),
+        )
+        val players = r.players
+        val score = players.associateWith { p -> r.cards.count { it.player == p && it.code in allowed && it.code !in handTraps } }
+        val side = players.maxByOrNull { score[it] ?: 0 }?.takeIf { r.log && players.size == 2 && (score[it] ?: 0) >= 3 }
+        if (side == null) {
+            // no log with two players: what was shown, in order
+            val cards = r.cards.mapNotNull { e -> e.code?.let { TimelineEntry(e.t, it, cn.name(it)) } }
+            if (cards.size < 5) return Result.Dropped("Too few card names could be read for free; Claude reading may do better on this video")
+            return Result.Kept(base.copy(opponent = "Unknown deck (free reading)", timeline = cards))
+        }
+        val other = players.first { it != side }
+        r.cards.firstOrNull { it.player == side && it.exact && it.code !in allowed && it.code !in handTraps }?.let {
+            return Result.Dropped("The ${deck.title} player uses ${cn.name(it.code!!)}, which none of the deck lists play")
+        }
+        val opponent = r.cards.filter { it.player == other }.mapNotNull { e -> e.code?.let { cn.archetype(it) } }
+            .filter { it.isNotBlank() }.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: "Unknown deck"
+
+        // games end at win lines; turns start at turn lines, or when the other player starts acting
+        val games = ArrayList<GameRecord>()
+        var turns = ArrayList<TurnRecord>()
+        var turnEvents = ArrayList<FreeReader.Event>()
+        var turnNo = 0
+        fun closeTurn() {
+            if (turnEvents.isEmpty()) return
+            val actor = turnEvents.firstOrNull { it.code != null }?.player ?: return
+            val mine = turnEvents.filter { it.player == actor && it.code != null }
+            val summary = mine.groupBy { it.action }.entries.joinToString(" · ") { (a, es) ->
+                a.replace('_', ' ').replaceFirstChar { it.uppercase() } + ": " + es.joinToString(", ") { cn.name(it.code!!) }
+            }
+            turns += TurnRecord(
+                turn = ++turnNo, ours = actor == side, summary = summary,
+                plays = mine.mapNotNull { it.code }.distinct(), endBoard = emptyList(),
+                interrupts = turnEvents.filter { it.player != actor && it.action == "activate" && it.code != null }
+                    .map { Interrupt(it.code, cn.name(it.code!!), it.player == side, "") },
+            )
+            turnEvents = ArrayList()
+        }
+        fun closeGame(end: FreeReader.Event?) {
+            closeTurn()
+            if (turns.isEmpty()) return
+            val winner = end?.let { e -> listOf(side, other).firstOrNull { it.lowercase() in e.text.lowercase() || it == e.player } }
+            val lost = end?.text?.lowercase()?.let { "lost" in it || "surrender" in it || "defeat" in it } == true
+            val won = when {
+                winner == null -> null
+                lost -> winner != side
+                else -> winner == side
+            }
+            games += GameRecord(games.size + 1, turns.first().ours, won, end?.text ?: "", turns, emptyList())
+            turns = ArrayList()
+            turnNo = 0
+        }
+        for (e in r.events) {
+            when {
+                e.action == "game_end" -> closeGame(e)
+                e.action == "turn" -> closeTurn()
+                e.code != null && turnEvents.isNotEmpty() && e.action != "activate" &&
+                    turnEvents.firstOrNull { it.code != null }?.player.let { it != null && it != e.player } -> {
+                    closeTurn()
+                    turnEvents += e
+                }
+                else -> turnEvents += e
+            }
+        }
+        closeGame(null)
+        if (games.isEmpty()) return Result.Dropped("No game could be read from the duel log")
+        return Result.Kept(base.copy(opponent = opponent, games = games, format = "Duel log (free reading)"))
+    }
+
     private suspend fun readOne(
         deck: DeckAnalysis,
         hit: VideoHit,
         work: VideoWork,
-        reader: MatchReader,
+        reader: MatchReader?,
         cn: CardNames,
         allowed: Set<Long>,
         candidates: List<String>,
@@ -151,6 +240,7 @@ class ReplayViewModel(app: Application) : AndroidViewModel(app) {
         // whole games: a frame every 2 s, at most 360 kept
         val video = work.prepare(hit.url, "Finding the plays", 0.25f, 0.3f, stepMs = 2000, maxFrames = 360, progress = progress)
         val frames = video.frames
+        if (reader == null) return readFree(deck, hit, video, cn, allowed, progress)
 
         // Which of A / B plays the archetype: the side whose identified cards are mostly in the lists.
         val inLists = mutableMapOf("A" to 0, "B" to 0)

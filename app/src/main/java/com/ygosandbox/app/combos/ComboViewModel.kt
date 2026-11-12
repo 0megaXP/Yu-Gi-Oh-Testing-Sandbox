@@ -228,20 +228,27 @@ class ComboViewModel(app: Application) : AndroidViewModel(app) {
         val r = FreeReader.read(video.frames, cn, allowed, handTraps, hit.title, video.description, extra) {
             progress("Reading card names", 0.45f + 0.45f * it)
         }
-        r.outside.firstOrNull()?.let { return Outcome.Dropped("Shows ${cn.name(it)}, which none of the deck lists play") }
-        if (r.sequence.size < 3)
+        // With a duel log naming players, the combo is the player whose cards the lists play.
+        val me = r.players.maxByOrNull { p -> r.cards.count { it.player == p && it.code in allowed } }
+        val mine = r.cards.filter { me == null || it.player == null || it.player == me }
+        mine.firstOrNull { it.exact && it.code !in allowed && it.code !in handTraps }?.let {
+            return Outcome.Dropped("Uses ${cn.name(it.code!!)}, which none of the deck lists play")
+        }
+        val steps = mine.filter { it.code !in handTraps || it.player != null }
+        if (steps.size < 3)
             return Outcome.Dropped("Too few card names could be read for free; Claude reading may do better on this video")
         return Outcome.Kept(
             VideoCombo(
                 url = hit.url, title = hit.title, uploader = hit.uploader, date = video.date.ifEmpty { hit.date },
                 going = "unknown",
                 hand = r.hand,
-                steps = r.sequence.map { (t, id) -> ComboStep(t, "use", id, cn.name(id), "") },
+                steps = steps.map { e -> ComboStep(e.t, e.action, e.code, cn.name(e.code!!), if (r.log) e.text else "") },
                 endBoard = emptyList(),
                 interruptions = emptyList(),
                 chokePoints = emptyList(),
                 uncertain = listOf(
-                    "Read for free: the steps are the cards in the order their names appeared on screen. The engine's " +
+                    if (r.log) "Read for free from the duel log on screen; the engine's check works out the end board."
+                    else "Read for free: the steps are the cards in the order their names appeared on screen. The engine's " +
                         "check works out what each one did and the end board.",
                 ),
             )

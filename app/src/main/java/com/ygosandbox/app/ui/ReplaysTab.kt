@@ -67,11 +67,12 @@ fun ReplaysTab(deck: DeckAnalysis, vm: AppViewModel, rvm: ReplayViewModel, openC
     val busyHere = ui.runFor == deck.id && ui.run != null
     val busyElsewhere = ui.run != null && ui.runFor != deck.id
     val hasKey = rvm.settings.apiKey.isNotBlank()
+    var free by remember { mutableStateOf(rvm.settings.freeReading) }
     var showDropped by rememberSaveable(deck.id) { mutableStateOf(false) }
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item { InterruptionNote() }
-        if (!hasKey) item { ReplayNote("Add your Anthropic API key in the Combos tab (gear icon) to read matches.") }
+        if (!free && !hasKey) item { ReplayNote("Add your Anthropic API key in the Combos tab (gear icon) for Claude reading, or use free reading.") }
         ui.run?.takeIf { busyHere }?.let { p ->
             item {
                 Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.medium) {
@@ -95,7 +96,8 @@ fun ReplaysTab(deck: DeckAnalysis, vm: AppViewModel, rvm: ReplayViewModel, openC
             if (ui.searchFor == deck.id && (ui.searching || ui.hits.isNotEmpty() || ui.searchError != null)) {
                 PickMatches(deck, vm, rvm, lib?.readUrls ?: emptySet())
             } else {
-                FindMatches(deck, vm, rvm, enabled = hasKey && !busyHere && !busyElsewhere)
+                FindMatches(deck, vm, rvm, free, onFree = { rvm.settings.freeReading = it; free = it },
+                    enabled = (free || hasKey) && !busyHere && !busyElsewhere)
             }
         }
         if (busyElsewhere) item { ReplayNote("Another deck's matches are being read; wait for that to finish.") }
@@ -151,7 +153,14 @@ private fun Record(deck: DeckAnalysis, matches: List<MatchReplay>) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun FindMatches(deck: DeckAnalysis, vm: AppViewModel, rvm: ReplayViewModel, enabled: Boolean) {
+private fun FindMatches(
+    deck: DeckAnalysis,
+    vm: AppViewModel,
+    rvm: ReplayViewModel,
+    free: Boolean,
+    onFree: (Boolean) -> Unit,
+    enabled: Boolean,
+) {
     var sinceBanlist by rememberSaveable { mutableStateOf(true) }
     val banlist = remember(deck.format) { Banlists.latest(deck.format, vm.settings.customBanlists(deck.format.name)) }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -160,6 +169,15 @@ private fun FindMatches(deck: DeckAnalysis, vm: AppViewModel, rvm: ReplayViewMod
                 label = { Text(banlist?.let { "Since ${Banlists.pretty(it)}" } ?: "Last 90 days") })
             FilterChip(selected = !sinceBanlist, onClick = { sinceBanlist = false }, label = { Text("Last 6 months") })
         }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FilterChip(selected = free, onClick = { onFree(true) }, label = { Text("Free reading") })
+            FilterChip(selected = !free, onClick = { onFree(false) }, label = { Text("Claude reading") })
+        }
+        ReplayNote(
+            if (free) "Free: on the phone. Videos showing a duel log (Duelingbook and the like) give turns, games and " +
+                "results; other videos give a timeline of the cards shown."
+            else "Claude follows both players through every game, from the screen and the commentary. Uses your API key (paid)."
+        )
         Button(
             onClick = {
                 val since = if (sinceBanlist) (banlist ?: LocalDate.now().minusDays(90)).toString() else LocalDate.now().minusMonths(6).toString()
@@ -238,6 +256,18 @@ private fun MatchCard(vm: AppViewModel, rvm: ReplayViewModel, deckId: String, m:
             }
             if (open) {
                 m.games.forEach { g -> GameSection(vm, g, openCards) }
+                if (m.timeline.isNotEmpty()) {
+                    ReplayLabel("Cards shown, in order (free reading: no sides or turns)")
+                    m.timeline.forEach { e ->
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            CardThumbnail(vm, e.code, width = 28) { openCards(m.timeline.map { it.code }, m.timeline.indexOf(e)) }
+                            Text(e.name, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                            TextButton(onClick = { runCatching { uri.openUri(m.url + (if ('?' in m.url) "&" else "?") + "t=${e.t.toInt()}s") } }) {
+                                Text(ComboViewModel.clock(e.t))
+                            }
+                        }
+                    }
+                }
                 if (m.sideChanges.isNotEmpty()) {
                     ReplayLabel("Side deck changes")
                     m.sideChanges.forEach { ReplayNote("• $it") }

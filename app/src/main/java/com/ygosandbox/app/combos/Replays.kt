@@ -44,10 +44,14 @@ data class MatchReplay(
     val games: List<GameRecord>,
     val sideChanges: List<String>,
     val lessons: List<String>,
+    /** Free reading without a duel log: the cards shown, in order (no sides, turns or result). */
+    val timeline: List<TimelineEntry> = emptyList(),
 ) {
     val wins: Int get() = games.count { it.won == true }
     val losses: Int get() = games.count { it.won == false }
 }
+
+data class TimelineEntry(val t: Double, val code: Long, val name: String)
 
 data class ReplayLibrary(val deckId: String, val matches: List<MatchReplay>, val dropped: List<DroppedVideo>, val updatedAt: Long) {
     val readUrls: Set<String> get() = (matches.map { it.url } + dropped.map { it.url }).toSet()
@@ -80,6 +84,7 @@ class ReplayStore(context: Context) {
             JSONObject().put("url", m.url).put("title", m.title).put("uploader", m.uploader).put("date", m.date)
                 .put("format", m.format).put("opponent", m.opponent)
                 .put("sideChanges", JSONArray(m.sideChanges)).put("lessons", JSONArray(m.lessons))
+                .put("timeline", JSONArray(m.timeline.map { JSONObject().put("t", it.t).put("code", it.code).put("name", it.name) }))
                 .put("games", JSONArray(m.games.map { g ->
                     JSONObject().put("number", g.number).put("weFirst", g.weFirst ?: JSONObject.NULL)
                         .put("won", g.won ?: JSONObject.NULL).put("how", g.how).put("turningPoints", JSONArray(g.turningPoints))
@@ -102,6 +107,7 @@ class ReplayStore(context: Context) {
                 url = m.optString("url"), title = m.optString("title"), uploader = m.optString("uploader"),
                 date = m.optString("date"), format = m.optString("format"), opponent = m.optString("opponent"),
                 sideChanges = m.optJSONArray("sideChanges").strings(), lessons = m.optJSONArray("lessons").strings(),
+                timeline = m.optJSONArray("timeline").objects().map { TimelineEntry(it.optDouble("t"), it.optLong("code"), it.optString("name")) },
                 games = m.optJSONArray("games").objects().map { g ->
                     GameRecord(
                         number = g.optInt("number"), weFirst = g.boolOrNull("weFirst"), won = g.boolOrNull("won"),

@@ -138,6 +138,9 @@ class CardNames(private val db: CardDatabase) {
 
     fun isExtraDeck(id: Long): Boolean = db.find(id)?.isExtraDeck == true
 
+    /** The card's archetype as YGOPRODeck tags it ("" when none). */
+    fun archetype(id: Long): String = db.find(id)?.archetype ?: ""
+
     /** The card whose name is exactly [text] (any card), or null. */
     fun exact(text: String): Long? = byNorm[norm(text)]
 

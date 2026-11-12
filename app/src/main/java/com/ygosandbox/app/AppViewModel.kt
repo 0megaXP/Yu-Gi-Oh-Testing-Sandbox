@@ -524,6 +524,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             seed = System.currentTimeMillis(),
             // Your deck's combo pieces, if its reference boards were built.
             library = pieceLibrary(mine),
+            policy = policies.load(),
             settings = SearchSettings(
                 iterations = setup.depth.iterations,
                 verifyIterations = setup.depth.verifyIterations,
@@ -582,6 +583,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     branchIterations = (setup.depth.iterations / 6).coerceIn(150, 800),
                     seed = System.currentTimeMillis(),
                     library = pieceLibrary(mine),
+                    policy = policies.load(),
                 ) { p -> _ui.update { it.copy(play = it.play.copy(treeProgress = p)) } }
                 _ui.update { it.copy(play = it.play.copy(tree = tree)) }
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -642,6 +644,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val videoCombos = com.ygosandbox.app.combos.ComboStore(app)
 
+    /** The engine's learned move policy, shared by all decks (see PolicyStore). */
+    val policies = com.ygosandbox.app.data.PolicyStore(app)
+
     /**
      * The combo pieces the engine's search starts from for a deck: its reference boards' pieces
      * plus those of verified video lines the deck can play (Combos tab).
@@ -668,7 +673,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     hands = if (thorough) 30 else 12,
                     iterations = if (thorough) 2000 else 1000,
                     seed = System.currentTimeMillis(),
+                    // the deck's best lines also teach the shared move policy
+                    policy = policies.load(),
                 ) { p -> _ui.update { it.copy(play = it.play.copy(refProgress = p)) } }
+                policies.save(result.policyJson)
                 if (result.samples.isNotEmpty()) references.save(references.signature(choice.main, choice.extra), result)
                 else _ui.update { it.copy(play = it.play.copy(refError = "Stopped before the first hand finished")) }
                 _ui.update { it.copy(play = it.play.copy(refRevision = it.play.refRevision + 1)) }
@@ -744,6 +752,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     libraries = if (deck1First) listOf(lib1, lib2) else listOf(lib2, lib1),
                     // The engine asks the person for their own zone choices.
                     human = if (humanMode) bottom else -1,
+                    policy = policies.load(),
                 )
                 liveDuel = duel
                 publishDuelState(duel)

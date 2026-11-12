@@ -182,7 +182,10 @@ class ComboViewModel(app: Application) : AndroidViewModel(app) {
         val list = VideoPieces.deckFor(deck, v, db)
             ?: return v.copy(check = LineCheck(false, 0, 0, 0.0, "no tournament list with a card list to replay it with", null))
         return try {
-            val res = engine().videoLines(list, listOf(VideoPieces.input(v)), seconds = 45.0)
+            val store = com.ygosandbox.app.data.PolicyStore(getApplication<Application>())
+            // a verified line also teaches the engine's move policy
+            val res = engine().videoLines(list, listOf(VideoPieces.input(v)), seconds = 45.0, policy = store.load())
+            store.save(res.policyJson)
             val l = res.lines.firstOrNull() ?: return v
             v.copy(check = LineCheck(l.verified, l.stepsMatched, l.stepsChecked, l.boardMatch, l.problem,
                 if (l.verified) res.libraryJson else null))

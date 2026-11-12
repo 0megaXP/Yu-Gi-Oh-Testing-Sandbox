@@ -75,6 +75,17 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
   - **Combo pieces:** the lines are split into sub-combos and merged across hands, each with what it needs, what it gives and which of the most played hand traps can stop it (and from which step). Starters come first, then the most common pieces. A reference built with an older version needs a rebuild to show them.
   - **Used by the engine:** once a deck has reference boards, its pieces steer the search in the Play engine, the combo tree and that deck's bot in the duel simulator. The search first tries plans that chain pieces the current cards allow, recombining pieces from different hands. After an interruption, the plan is rebuilt from what is left. This helps most with quick searches, such as the Normal bot.
   - Saved per card list (`refs/`), so editing the deck asks for a new reference.
+- **Learned move policy** (test): the engine learns which options strong lines choose and tries those first in every search. This covers the Play engine, the combo tree and the duel bots.
+  - **What teaches it:** building reference boards for any deck adds that deck's best lines. Verified video lines from the Combos tab add more and count double.
+  - **One policy for all decks:** it's kept on the phone (`policy.json`) and keeps learning.
+  - **Measured on the desktop**, 12 new hands per deck at a quick search budget. One policy trained on 16 hands each of Angelechy and Elfnote found a better board on every hand of both decks:
+
+    | Deck | Average board |
+    |---|---|
+    | Elfnote | 0.807 → 0.894 |
+    | Angelechy | 0.803 → 0.850 |
+
+    Details in the engine's docs/api.md.
 - **Side plan** (test): from a deck's Analysis page, pick an opponent deck to get what to side in and out, going first and going second, with the reason for each card. *Simulate their boards* first plays several of their opening turns and rates your board breakers against what they actually build.
 - **Duel simulator** (test): a full duel with the real card rules, in two modes: **You vs bot** or **Bot vs bot**.
   - Pick both decks, who goes first and the bot level:

@@ -88,6 +88,8 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
 - **Background work:** long jobs keep running when you leave the app or turn the screen off.
   - **Which jobs:** reading combo and match videos, checking lines with the engine, archetype searches, Play engine, combo tree, side plan and reference boards.
   - **Notification:** a notification shows the progress and has a Stop button. On Android 13 and later, the app asks once to show notifications; the work runs either way.
+  - **Also covered:** the app update and card database downloads. An update downloaded while the phone is locked installs when you come back to the app, because Android only opens the installer while the app is on screen.
+  - **Staying awake:** the service keeps the CPU and Wi-Fi awake, and video downloads resume after a dropped connection. The first time a long job starts, Android asks once whether the app may run without battery restrictions; say yes, or some phones' battery savers still stop it.
   - **When it still stops:** closing the app from the recent apps list stops engine jobs. Video reading carries on.
 - **In-app updates** from this repository's GitHub releases.
 

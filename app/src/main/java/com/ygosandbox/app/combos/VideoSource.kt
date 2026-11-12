@@ -134,9 +134,11 @@ object VideoSource {
         var total = -1L
         var done = 0L
         target.delete()
+        var failures = 0
         RandomAccessFile(target, "rw").use { out ->
             while (total < 0 || done < total) {
                 coroutineContext.ensureActive()
+                out.seek(done)
                 val conn = URL(url).openConnection() as HttpURLConnection
                 conn.connectTimeout = 15_000
                 conn.readTimeout = 60_000
@@ -159,7 +161,12 @@ object VideoSource {
                         }
                     }
                     if (total > 0) onProgress(done.toFloat() / total)
+                    failures = 0
                     if (code == 200 || total < 0) break // the server ignored the range and sent everything
+                } catch (e: java.io.IOException) {
+                    // a dropped connection (screen off, switching networks): resume where it stopped
+                    if (++failures > 5) throw e
+                    kotlinx.coroutines.delay(2_000L * failures)
                 } finally {
                     conn.disconnect()
                 }

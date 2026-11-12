@@ -16,6 +16,16 @@ class MainActivity : ComponentActivity() {
     // Android 13+: lets the background-work notification (progress and Stop) show.
     private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
+    override fun onResume() {
+        super.onResume()
+        vm.onScreen(true)
+    }
+
+    override fun onPause() {
+        vm.onScreen(false)
+        super.onPause()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()

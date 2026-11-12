@@ -47,6 +47,7 @@ object BackgroundWork {
         if (first) runCatching {
             ContextCompat.startForegroundService(context.applicationContext, Intent(context.applicationContext, WorkService::class.java))
         }
+        askBatteryOnce(context.applicationContext)
     }
 
     fun update(key: String, text: String, progress: Float?) =
@@ -72,6 +73,25 @@ object BackgroundWork {
 
     internal fun stopAll() = jobs.value.values.forEach { runCatching { it.stop() } }
 
+    /**
+     * Many phones' battery savers stop background work despite the notification. The first time a
+     * long job starts, Android's own dialog asks to let the app run unrestricted (asked once).
+     */
+    private fun askBatteryOnce(context: Context) {
+        val prefs = context.getSharedPreferences("background", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("asked_battery", false)) return
+        prefs.edit().putBoolean("asked_battery", true).apply()
+        val pm = context.getSystemService(PowerManager::class.java)
+        if (pm.isIgnoringBatteryOptimizations(context.packageName)) return
+        runCatching {
+            context.startActivity(
+                Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                    .setData(android.net.Uri.parse("package:" + context.packageName))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
+    }
+
     /** Android 13+ hides the notification unless this is granted; the work runs either way. */
     fun needsNotificationPermission(context: Context) =
         Build.VERSION.SDK_INT >= 33 &&
@@ -80,6 +100,8 @@ object BackgroundWork {
 
 class WorkService : Service() {
     private var wake: PowerManager.WakeLock? = null
+    // keeps Wi-Fi from dozing with the screen off, which stalls downloads
+    private var wifi: android.net.wifi.WifiManager.WifiLock? = null
     private var watcher: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -96,6 +118,13 @@ class WorkService : Service() {
         wake = getSystemService(PowerManager::class.java)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ygosandbox:background-work")
             .apply { setReferenceCounted(false); acquire(4 * 60 * 60 * 1000L) }
+        wifi = runCatching {
+            val wm = applicationContext.getSystemService(android.net.wifi.WifiManager::class.java)
+            @Suppress("DEPRECATION")
+            val mode = if (Build.VERSION.SDK_INT >= 29) android.net.wifi.WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+            else android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF
+            wm.createWifiLock(mode, "ygosandbox:background-work").apply { setReferenceCounted(false); acquire() }
+        }.getOrNull()
         watcher = BackgroundWork.scope.launch {
             BackgroundWork.jobs.collect { m ->
                 if (m.isEmpty()) {
@@ -117,6 +146,7 @@ class WorkService : Service() {
     override fun onDestroy() {
         watcher?.cancel()
         runCatching { wake?.release() }
+        runCatching { wifi?.release() }
         super.onDestroy()
     }
 

@@ -167,16 +167,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun updateCardDatabase() {
         if (_ui.value.dbStatus == DbStatus.DOWNLOADING) return
-        viewModelScope.launch { refreshCardDatabaseIfChanged(force = true) }
+        keepAwake("Checking the card database") { refreshCardDatabaseIfChanged(force = true) }
     }
 
     fun redownloadCardDatabase() {
         if (_ui.value.dbStatus == DbStatus.DOWNLOADING) return
-        viewModelScope.launch { downloadCardDatabase() }
+        keepAwake("Downloading the card database") { downloadCardDatabase() }
     }
 
     fun retryCardDatabase() {
-        viewModelScope.launch { openCardDatabase() }
+        keepAwake("Downloading the card database") { openCardDatabase() }
     }
 
     private suspend fun downloadCardDatabase(knownVersion: String? = null) {
@@ -399,6 +399,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Set by MainActivity (onScreen): whether the app is on screen. */
+    private var visible = true
+    private var pendingInstall: java.io.File? = null
+
+    fun onScreen(visible: Boolean) {
+        this.visible = visible
+        if (visible) pendingInstall?.let { apk ->
+            pendingInstall = null
+            Updater.install(getApplication(), apk)
+        }
+    }
+
     fun installUpdate() {
         val info = _ui.value.update ?: return
         if (_ui.value.updateProgress != null) return
@@ -408,11 +420,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             Updater.openInstallPermissionSettings(app)
             return
         }
-        viewModelScope.launch {
+        keepAwake("Downloading the update") {
             _ui.update { it.copy(updateProgress = 0f) }
             try {
-                val apk = Updater.download(app, info, settings.githubToken) { p -> _ui.update { it.copy(updateProgress = p) } }
-                Updater.install(app, apk)
+                val apk = Updater.download(app, info, settings.githubToken) { p ->
+                    _ui.update { it.copy(updateProgress = p) }
+                    com.ygosandbox.app.work.BackgroundWork.update("app:Downloading the update", "${(p * 100).toInt()}%", p)
+                }
+                // Android only opens the installer while the app is on screen: with the phone
+                // locked, it waits for the app to come back (see onScreen).
+                if (visible) Updater.install(app, apk) else pendingInstall = apk
             } catch (e: Exception) {
                 showMessage("Update failed: ${e.message}")
             } finally {

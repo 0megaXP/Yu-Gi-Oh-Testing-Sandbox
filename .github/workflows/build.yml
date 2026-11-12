@@ -13,6 +13,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # engine/ is a submodule pointing at the private Yu-Gi-Oh-Engine repo. The default token
+      # can't read it, so it is fetched with the ENGINE_TOKEN secret (read access to that repo).
+      - name: Fetch the engine submodule
+        env:
+          ENGINE_TOKEN: ${{ secrets.ENGINE_TOKEN }}
+        run: |
+          if [ -z "$ENGINE_TOKEN" ]; then
+            echo "::error::Add a repository secret ENGINE_TOKEN with read access to 0megaXP/Yu-Gi-Oh-Engine (see README)."
+            exit 1
+          fi
+          git -c "url.https://x-access-token:${ENGINE_TOKEN}@github.com/.insteadOf=https://github.com/" \
+            submodule update --init --depth 1 engine
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

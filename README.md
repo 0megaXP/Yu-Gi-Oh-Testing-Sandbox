@@ -42,6 +42,13 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
   Inside each category cards are sorted by type: Monsters, Spells, Traps, Fusion, Synchro, Xyz, Link.
   Results are saved in the deck list, together with the full card list of every tournament deck used.
   Open a deck in the Decks tab to see its list and import it into My decks. Tap a card for its details; use the arrows for the previous or next one.
+- **Play engine** (test): finds the best plays for an opening hand against a real deck.
+  - Pick your deck and the opponent's deck from My decks or any tournament list saved by an Archetype search.
+  - Choose going first or second, your 5-card hand (pick or random) and a search depth.
+  - **Practice** sees both hands; leave theirs empty for a random one per sample. **Real play** knows only your hand and samples theirs from their list.
+  - The engine plays the real card rules (ygopro-core with the EDOPro scripts). It shows the top lines with their steps, the end board, what that board can stop against this opponent, and the opponent's strongest reply found when they play their turn against it.
+  - Searches can be stopped early and keep what they found. Cards EDOPro can't play yet are listed.
+- **Side plan** (test): from a deck's Analysis page, pick an opponent deck to get what to side in and out, going first and going second, with the reason for each card. *Simulate their boards* first plays several of their opening turns and rates your board breakers against what they actually build.
 - **In-app updates** from this repository's GitHub releases.
 
 ### How cards are sorted
@@ -64,6 +71,20 @@ Every push runs the **Build APK** workflow. Builds on `main` become a GitHub rel
 **Update** banner. Because the repository is private, add a read-only GitHub token under
 **Settings → App version** (fine-grained token, this repository only, *Contents: Read*).
 
+### The engine submodule
+
+The engine lives in its own repository, [Yu-Gi-Oh-Engine](https://github.com/0megaXP/Yu-Gi-Oh-Engine), included here as the `engine/` submodule (Gradle module `:ygoe`). That repository is private, so the workflow needs a repository secret **`ENGINE_TOKEN`**:
+
+1. On GitHub: Settings → Developer settings → Fine-grained tokens → Generate new token.
+2. Repository access: only *Yu-Gi-Oh-Engine*. Permissions: *Contents: Read-only*.
+3. In this repository: Settings → Secrets and variables → Actions → New repository secret, name `ENGINE_TOKEN`.
+
+The build also fetches the rules core, card scripts and card database the engine pins (from GitHub) and packs them into the APK. This adds about 25 MB.
+
+For a local build, run `git submodule update --init`. Android Studio needs git, python3 and the NDK (it installs the NDK on first build).
+
+To use a newer engine version, run `git -C engine pull origin main` and commit the submodule change.
+
 ## Banlist dates
 
 Built-in dates live in `data/Banlists.kt`. When a new list comes out, add its effective date
@@ -80,5 +101,7 @@ app/src/main/java/com/ygosandbox/app/
   data/DeckStore.kt      saved results (decks.json)
   data/Banlists.kt       banlist dates and format periods
   update/Updater.kt      in-app updater (GitHub releases)
-  ui/                    Jetpack Compose screens
+  play/PlayModels.kt     Play engine / side plan state and deck choices
+  ui/                    Jetpack Compose screens (Play engine + side plan: ui/PlayScreens.kt)
+engine/                  the play engine (submodule, Gradle module :ygoe)
 ```

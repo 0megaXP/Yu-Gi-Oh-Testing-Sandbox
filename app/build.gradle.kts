@@ -10,6 +10,8 @@ android {
 
     defaultConfig {
         applicationId = "com.ygosandbox.app"
+        // The engine ships native code for phones (arm64) and the emulator (x86_64).
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         minSdk = 26
         targetSdk = 35
         // Every GitHub build gets the next version: 0.0.1, 0.0.2, ...
@@ -60,6 +62,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+    // Play engine: best lines, end boards and side plans (engine/ submodule).
+    implementation(project(":ygoe"))
 
     // Card pictures, cached on the phone after the first view.
     implementation("io.coil-kt:coil-compose:2.7.0")

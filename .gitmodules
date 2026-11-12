@@ -1,0 +1,3 @@
+[submodule "engine"]
+	path = engine
+	url = https://github.com/0megaXP/Yu-Gi-Oh-Engine.git

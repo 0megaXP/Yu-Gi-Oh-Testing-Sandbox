@@ -17,7 +17,19 @@ import com.ygosandbox.app.model.TimeSpan
 import com.ygosandbox.app.net.ApiException
 import com.ygosandbox.app.update.UpdateInfo
 import com.ygosandbox.app.update.Updater
+import com.ygoengine.AnalysisRequest
+import com.ygoengine.Knowledge
+import com.ygoengine.SearchSettings
+import com.ygoengine.SideState
+import com.ygoengine.YgoEngine
+import com.ygosandbox.app.play.DeckChoice
+import com.ygosandbox.app.play.HAND_SIZE
+import com.ygosandbox.app.play.PlaySetup
+import com.ygosandbox.app.play.PlayState
+import com.ygosandbox.app.play.deckChoices
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -34,6 +46,8 @@ sealed interface Screen {
     data class DeckEditor(val id: String) : Screen
     data object Analysis : Screen
     data class AnalysisDeck(val id: String) : Screen
+    data object Play : Screen
+    data class SidePlan(val deckId: String) : Screen
     data object Settings : Screen
 }
 
@@ -58,6 +72,8 @@ data class UiState(
     val message: String? = null,
     val update: UpdateInfo? = null,
     val updateProgress: Float? = null,
+    /** Play engine: setup, progress and results; also the side plan. */
+    val play: PlayState = PlayState(),
 ) {
     val screen: Screen get() = stack.last()
 }
@@ -393,6 +409,145 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun setDeckGrid(grid: Boolean) {
         settings.deckGrid = grid
         _ui.update { it.copy(deckGrid = grid) }
+    }
+
+    // ---------- Play engine ----------
+
+    private var engine: YgoEngine? = null
+    private val engineLock = Mutex()
+    private var playJob: Job? = null
+    private var sideJob: Job? = null
+
+    /** Opens the engine once; the first time it copies the card scripts into app storage. */
+    private suspend fun engine(): YgoEngine = engineLock.withLock {
+        engine ?: run {
+            _ui.update { it.copy(play = it.play.copy(preparing = true)) }
+            try {
+                YgoEngine.open(getApplication<Application>()).also { engine = it }
+            } finally {
+                _ui.update { it.copy(play = it.play.copy(preparing = false)) }
+            }
+        }
+    }
+
+    fun playDeckChoices(): List<DeckChoice> = deckChoices(_ui.value.myDecks, _ui.value.decks)
+
+    fun deckChoice(key: String?): DeckChoice? = key?.let { k -> playDeckChoices().firstOrNull { it.key == k } }
+
+    fun updatePlaySetup(change: (PlaySetup) -> PlaySetup) = _ui.update { s ->
+        val before = s.play.setup
+        var after = change(before)
+        // A different deck invalidates the hand picked from the old one.
+        if (after.myDeck != before.myDeck) after = after.copy(myHand = emptyList())
+        if (after.opponentDeck != before.opponentDeck) after = after.copy(opponentHand = emptyList())
+        s.copy(play = s.play.copy(setup = after, error = null))
+    }
+
+    /** Deals a random opening hand from the chosen deck. */
+    fun dealHand(mine: Boolean) {
+        val setup = _ui.value.play.setup
+        val deck = deckChoice(if (mine) setup.myDeck else setup.opponentDeck) ?: return
+        val hand = deck.main.shuffled().take(HAND_SIZE)
+        updatePlaySetup { if (mine) it.copy(myHand = hand) else it.copy(opponentHand = hand) }
+    }
+
+    fun runPlay() {
+        if (playJob?.isActive == true) return
+        val setup = _ui.value.play.setup
+        val mine = deckChoice(setup.myDeck)
+        val theirs = deckChoice(setup.opponentDeck)
+        val problem = when {
+            mine == null -> "Pick your deck"
+            theirs == null -> "Pick the opponent's deck"
+            setup.myHand.size != HAND_SIZE -> "Pick your $HAND_SIZE-card hand (or tap Random)"
+            else -> null
+        }
+        if (problem != null) {
+            _ui.update { it.copy(play = it.play.copy(error = problem)) }
+            return
+        }
+        val me = SideState(deck = mine!!.toEngine(), hand = setup.myHand)
+        val opp = SideState(
+            deck = theirs!!.toEngine(),
+            hand = if (!setup.real && setup.opponentHand.size == HAND_SIZE) setup.opponentHand else null,
+        )
+        val request = AnalysisRequest(
+            first = if (setup.goingFirst) me else opp,
+            second = if (setup.goingFirst) opp else me,
+            me = if (setup.goingFirst) 0 else 1,
+            knowledge = if (setup.real) Knowledge.REAL else Knowledge.PRACTICE,
+            seed = System.currentTimeMillis(),
+            settings = SearchSettings(
+                iterations = setup.depth.iterations,
+                verifyIterations = setup.depth.verifyIterations,
+                maxSeconds = 240.0,
+                // Leave a core free so the phone stays responsive.
+                threads = (Runtime.getRuntime().availableProcessors() - 1).coerceAtLeast(1),
+            ),
+        )
+        playJob = viewModelScope.launch {
+            _ui.update { it.copy(play = it.play.copy(error = null, progress = com.ygoengine.Progress("starting", 0, 0))) }
+            try {
+                val result = engine().analyze(request) { p -> _ui.update { it.copy(play = it.play.copy(progress = p)) } }
+                _ui.update { it.copy(play = it.play.copy(result = result, resultSetup = setup)) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _ui.update { it.copy(play = it.play.copy(error = "The engine failed: ${e.message ?: e.toString()}")) }
+            } finally {
+                _ui.update { it.copy(play = it.play.copy(progress = null)) }
+            }
+        }
+    }
+
+    /** Stops the search early; the lines found so far are still shown. */
+    fun stopPlay() {
+        engine?.cancel()
+    }
+
+    fun setSideOpponent(deckId: String, opponent: String?) = _ui.update {
+        it.copy(play = it.play.copy(sideDeck = deckId, sideOpponent = opponent, sideError = null))
+    }
+
+    fun setSideSimulate(on: Boolean) = _ui.update { it.copy(play = it.play.copy(sideSimulate = on)) }
+
+    fun runSidePlan(deckId: String) {
+        if (sideJob?.isActive == true) return
+        val play = _ui.value.play
+        val mine = deckChoice("my:$deckId")
+        val theirs = deckChoice(play.sideOpponent)
+        if (mine == null || theirs == null) {
+            _ui.update { it.copy(play = it.play.copy(sideError = "Pick the opponent's deck")) }
+            return
+        }
+        sideJob = viewModelScope.launch {
+            _ui.update {
+                it.copy(play = it.play.copy(sideError = null, sideResult = null, sideProgress = com.ygoengine.Progress("starting", 0, 0)))
+            }
+            try {
+                val result = engine().side(
+                    mine.toEngine(), theirs.toEngine(),
+                    simulateTurns = if (play.sideSimulate) 6 else 0,
+                    iterationsPerTurn = 500,
+                ) { p -> _ui.update { it.copy(play = it.play.copy(sideProgress = p)) } }
+                _ui.update { it.copy(play = it.play.copy(sideResult = result, sideDeck = deckId)) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _ui.update { it.copy(play = it.play.copy(sideError = "The engine failed: ${e.message ?: e.toString()}")) }
+            } finally {
+                _ui.update { it.copy(play = it.play.copy(sideProgress = null)) }
+            }
+        }
+    }
+
+    fun stopSidePlan() {
+        engine?.cancel()
+    }
+
+    override fun onCleared() {
+        engine?.close()
+        engine = null
     }
 
     fun showMessage(text: String) = _ui.update { it.copy(message = text) }

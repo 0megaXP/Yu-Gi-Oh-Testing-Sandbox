@@ -27,6 +27,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -184,6 +185,10 @@ fun AnalysisDeckScreen(ui: UiState, vm: AppViewModel, id: String) {
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                         )
+
+                        OutlinedButton(onClick = { vm.open(Screen.SidePlan(deck.id)) }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Side plan against another deck")
+                        }
 
                         SectionTitle("Playable cards")
                         Text("Count as playable:", style = MaterialTheme.typography.bodySmall)

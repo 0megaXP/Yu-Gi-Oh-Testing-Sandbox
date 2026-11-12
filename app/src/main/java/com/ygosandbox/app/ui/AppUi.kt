@@ -21,6 +21,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Style
 import androidx.compose.material.icons.filled.ViewCarousel
@@ -81,6 +82,8 @@ fun SandboxApp(vm: AppViewModel) {
                     is Screen.DeckEditor -> DeckEditorScreen(ui, vm, s.id)
                     Screen.Analysis -> AnalysisScreen(ui, vm)
                     is Screen.AnalysisDeck -> AnalysisDeckScreen(ui, vm, s.id)
+                    Screen.Play -> PlayScreen(ui, vm)
+                    is Screen.SidePlan -> SidePlanScreen(ui, vm, s.deckId)
                     Screen.Settings -> SettingsScreen(ui, vm)
                 }
             }
@@ -138,6 +141,11 @@ private fun MainMenu(ui: UiState, vm: AppViewModel) {
             "Card roles and opening-hand odds for your decks",
             badge = { TestBadge() },
         ) { vm.open(Screen.Analysis) }
+        MenuTile(
+            Icons.Default.Psychology, "Play engine",
+            "Best plays and end boards for a hand, against a real deck",
+            badge = { TestBadge() },
+        ) { vm.open(Screen.Play) }
         MenuTile(
             Icons.Default.Style, "Card database",
             if (ui.cardCount > 0) "Browse ${ui.cardCount} cards and archetypes" else "Available once downloaded",

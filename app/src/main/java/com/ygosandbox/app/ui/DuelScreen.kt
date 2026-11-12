@@ -80,6 +80,7 @@ import com.ygosandbox.app.play.DuelMode
 import com.ygosandbox.app.play.DuelUi
 import com.ygosandbox.app.play.FirstPlayer
 import com.ygosandbox.app.play.LogEntry
+import com.ygoengine.DuelActivation
 import com.ygoengine.DuelMove
 import com.ygoengine.DuelPlace
 import androidx.compose.animation.core.Animatable
@@ -258,7 +259,7 @@ private fun DuelBoardScreen(d: DuelUi, vm: AppViewModel, onOpen: (List<Long>, In
         }
     }
     // Cards flying between zones, drawn above the board.
-    MoveOverlay(d, vm, spots, pending, canSee = { p -> reveal || p == d.human })
+    MoveOverlay(d, vm, spots, pending, colors, canSee = { p -> reveal || p == d.human })
     }
 
     pile?.let { (title, cards) ->
@@ -768,15 +769,28 @@ private class Flight(
 
 /** Draws the cards that moved in the latest update flying from their old place to their new one. */
 @Composable
-private fun MoveOverlay(d: DuelUi, vm: AppViewModel, spots: BoardSpots, pending: Pending, canSee: (Int) -> Boolean) {
+private fun MoveOverlay(
+    d: DuelUi,
+    vm: AppViewModel,
+    spots: BoardSpots,
+    pending: Pending,
+    colors: PlayerColors,
+    canSee: (Int) -> Boolean,
+) {
     val flights = remember { mutableStateListOf<Flight>() }
+    val effects = remember { mutableStateListOf<ActivationFx>() }
     var origin by remember { mutableStateOf(Offset.Zero) }
     var nextId by remember { mutableStateOf(0L) }
     LaunchedEffect(d.moveBatch) {
         flights.clear()
+        effects.clear()
         if (d.moveBatch == 0) return@LaunchedEffect
         // Let the new board lay out first, so every place has its current position.
         delay(16)
+        val times = timeline(d.moves, d.activations)
+        times.activations.forEach { (a, start) ->
+            effects += ActivationFx(nextId++, a.code, a.place.player, spots.find(a.place), start)
+        }
         plan(d.moves).forEachIndexed { i, p ->
             val from = spots.find(p.move.from)
             val to = spots.find(p.move.to)
@@ -784,7 +798,7 @@ private fun MoveOverlay(d: DuelUi, vm: AppViewModel, spots: BoardSpots, pending:
                 pending.land(p.waitKey) // nothing to animate: show the card right away
                 return@forEachIndexed
             }
-            flights += Flight(nextId++, p.move.code, hidden(p.move, canSee), from, to, i * STAGGER_MS, p.waitKey)
+            flights += Flight(nextId++, p.move.code, hidden(p.move, canSee), from, to, times.moveStarts[i], p.waitKey)
         }
     }
     val width = spots.slotWidth - 8.dp
@@ -796,6 +810,127 @@ private fun MoveOverlay(d: DuelUi, vm: AppViewModel, spots: BoardSpots, pending:
                     flights.remove(f)
                 }
             }
+        }
+        effects.toList().forEach { fx ->
+            key(fx.id) { ActivationEffect(fx, origin, colors.of(fx.player), vm) { effects.remove(fx) } }
+        }
+    }
+}
+
+// ---------------- Activation effect ----------------
+
+private class ActivationFx(val id: Long, val code: Long, val player: Int, val spot: Rect?, val delayMs: Long)
+
+/** When each move and activation of an update starts, so they play in the order they happened. */
+private class Timeline(val moveStarts: LongArray, val activations: List<Pair<DuelActivation, Long>>)
+
+/**
+ * Lays the update's moves and activations on one timeline: moves start a little apart, and an
+ * activation waits for the cards before it to land, then holds the next moves until it has shown.
+ */
+private fun timeline(moves: List<DuelMove>, activations: List<DuelActivation>): Timeline {
+    val shown = minOf(moves.size, MAX_FLIGHTS)
+    val offset = moves.size - shown
+    val acts = activations.takeLast(MAX_ACTIVATIONS)
+    val starts = LongArray(shown)
+    val out = ArrayList<Pair<DuelActivation, Long>>()
+    var cursor = 0L
+    var lastEnd = 0L
+    var ai = 0
+    for (i in 0..moves.size) {
+        while (ai < acts.size && acts[ai].afterMoves <= i) {
+            val start = maxOf(cursor, lastEnd)
+            out += acts[ai++] to start
+            cursor = start + ACTIVATION_GAP_MS
+            lastEnd = cursor
+        }
+        if (i == moves.size) break
+        if (i >= offset) {
+            starts[i - offset] = cursor
+            lastEnd = maxOf(lastEnd, cursor + FLIGHT_MS)
+            cursor += STAGGER_MS
+        }
+    }
+    return Timeline(starts, out)
+}
+
+private const val MAX_ACTIVATIONS = 6
+private const val ACTIVATION_MS = 950
+private const val ACTIVATION_GAP_MS = 650L
+
+/**
+ * An activation: the card's spot pulses with a ring in the player's colour, and the card pops up
+ * large in the middle of the board, then fades.
+ */
+@Composable
+private fun ActivationEffect(fx: ActivationFx, origin: Offset, color: Color, vm: AppViewModel, onDone: () -> Unit) {
+    val progress = remember { Animatable(0f) }
+    var started by remember { mutableStateOf(false) }
+    LaunchedEffect(fx.id) {
+        delay(fx.delayMs)
+        started = true
+        progress.animateTo(1f, tween(ACTIVATION_MS, easing = androidx.compose.animation.core.LinearEasing))
+        onDone()
+    }
+    if (!started) return
+    val t = progress.value
+    val density = androidx.compose.ui.platform.LocalDensity.current
+
+    // Pulse on the card's spot: a ring that grows and fades, over a soft glow.
+    fx.spot?.let { r ->
+        val w = with(density) { r.width.toDp() }
+        val h = with(density) { r.height.toDp() }
+        Box(
+            Modifier
+                .offset { IntOffset((r.left - origin.x).roundToInt(), (r.top - origin.y).roundToInt()) }
+                .size(w, h)
+                .graphicsLayer {
+                    val grow = 1f + 0.5f * t
+                    scaleX = grow
+                    scaleY = grow
+                    alpha = (1f - t).coerceIn(0f, 1f)
+                }
+                .border(3.dp, color, RoundedCornerShape(6.dp))
+                .background(color.copy(alpha = 0.25f), RoundedCornerShape(6.dp)),
+        )
+    }
+
+    // The card itself, shown large in the middle: pops in, holds, fades out.
+    val appear = (t / 0.2f).coerceIn(0f, 1f)
+    val fade = ((1f - t) / 0.25f).coerceIn(0f, 1f)
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier
+                .size(120.dp, (120 / 0.686f).dp)
+                .graphicsLayer {
+                    val s = 0.6f + 0.4f * FastOutSlowInEasing.transform(appear)
+                    scaleX = s
+                    scaleY = s
+                    alpha = minOf(appear, fade)
+                    shadowElevation = 24f
+                }
+                .border(3.dp, color, RoundedCornerShape(6.dp))
+                .clip(RoundedCornerShape(6.dp)),
+        ) {
+            AsyncImage(
+                model = vm.db.find(fx.code)?.imageUrl() ?: "https://images.ygoprodeck.com/images/cards/${fx.code}.jpg",
+                contentDescription = vm.db.find(fx.code)?.name,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+            // A light sweep across the card as it appears.
+            val sweep = ((t - 0.1f) / 0.4f).coerceIn(0f, 1f)
+            if (sweep in 0.01f..0.99f) Box(
+                Modifier.fillMaxSize().background(
+                    Brush.linearGradient(
+                        0f to Color.Transparent,
+                        (sweep - 0.12f).coerceAtLeast(0f) to Color.Transparent,
+                        sweep to Color.White.copy(alpha = 0.55f),
+                        (sweep + 0.12f).coerceAtMost(1f) to Color.Transparent,
+                        1f to Color.Transparent,
+                    ),
+                ),
+            )
         }
     }
 }

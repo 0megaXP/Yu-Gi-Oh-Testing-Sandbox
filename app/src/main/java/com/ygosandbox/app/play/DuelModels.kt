@@ -1,6 +1,7 @@
 package com.ygosandbox.app.play
 
 import com.ygoengine.BotLevel
+import com.ygoengine.DuelActivation
 import com.ygoengine.DuelMove
 import com.ygoengine.DuelState
 
@@ -41,7 +42,9 @@ data class DuelUi(
     val log: List<LogEntry> = emptyList(),
     /** Cards that moved in the latest update, for the board animation. */
     val moves: List<DuelMove> = emptyList(),
-    /** Goes up with every update that has moves, so the board knows to animate them. */
+    /** Cards and effects activated in the latest update, for the activation effect. */
+    val activations: List<DuelActivation> = emptyList(),
+    /** Goes up with every update that has moves or activations, so the board knows to animate them. */
     val moveBatch: Int = 0,
     val paused: Boolean = false,
     val thinking: Boolean = false,

@@ -723,7 +723,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 state = s,
                 log = (d.log + lines).takeLast(600),
                 moves = s.moves,
-                moveBatch = if (s.moves.isEmpty()) d.moveBatch else d.moveBatch + 1,
+                activations = s.activations,
+                moveBatch = if (s.moves.isEmpty() && s.activations.isEmpty()) d.moveBatch else d.moveBatch + 1,
             )
         }
     }

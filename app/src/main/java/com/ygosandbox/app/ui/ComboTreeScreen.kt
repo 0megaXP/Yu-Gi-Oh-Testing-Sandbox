@@ -96,7 +96,8 @@ fun ComboTreeScreen(ui: UiState, vm: AppViewModel) {
 
 @Composable
 private fun MainLine(vm: AppViewModel, tree: ComboTree, reference: com.ygoengine.ReferenceResult?, open: (List<Long>, Int) -> Unit) {
-    var showSteps by rememberSaveable { mutableStateOf(true) }
+    var showSteps by rememberSaveable { mutableStateOf(false) }
+    Column {
     Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(14.dp)) {
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Main line (no interruption)", fontWeight = FontWeight.SemiBold)
@@ -107,6 +108,26 @@ private fun MainLine(vm: AppViewModel, tree: ComboTree, reference: com.ygoengine
             Toggle(if (showSteps) "Hide steps" else "Steps (${tree.mainMoves.size})", showSteps) { showSteps = !showSteps }
             if (showSteps) Steps(tree.mainMoves, otherPrefix = "Opp: ")
         }
+    }
+    if (tree.mainParts.size > 1) {
+        Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SectionTitle("The line in parts")
+            Text(
+                "Each part is a sub-combo: what it needs, what it gives the next parts, and which of the tested " +
+                    "hand traps can stop it.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            tree.mainParts.forEachIndexed { i, p ->
+                val hitBy = tree.branches.filter { !it.stopsNothing && it.hitsPart == i }.map { it.handTrap.name }
+                ComboPieceCard(
+                    vm, key = "part$i", title = "Part ${i + 1}", piece = p, open = open,
+                    subtitle = if (hitBy.isEmpty()) null else "Where " + hitBy.joinToString(", ") + " hurt${if (hitBy.size == 1) "s" else ""} most",
+                    highlight = hitBy.isNotEmpty(),
+                )
+            }
+        }
+    }
     }
 }
 
@@ -133,7 +154,8 @@ private fun BranchCard(
                     } else {
                         val lost = ((tree.mainScore - b.score) * 100).toInt()
                         Text(
-                            "Worst moment: in response to ${b.usedOn.substringBefore(" — ").substringBefore("  →  ")}",
+                            "Worst moment: in response to ${b.usedOn.substringBefore(" — ").substringBefore("  →  ")}" +
+                                if (b.hitsPart >= 0 && tree.mainParts.size > 1) " (part ${b.hitsPart + 1})" else "",
                             style = MaterialTheme.typography.bodySmall,
                         )
                         Text(

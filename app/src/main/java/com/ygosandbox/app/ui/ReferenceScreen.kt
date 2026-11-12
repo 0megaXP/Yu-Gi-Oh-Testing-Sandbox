@@ -59,6 +59,7 @@ fun ReferenceScreen(ui: UiState, vm: AppViewModel, deckKey: String) {
     val ref = remember(choice, play.refRevision) { vm.referenceFor(choice) }
     var pager by remember { mutableStateOf<Pair<List<Long>, Int>?>(null) }
     val open: (List<Long>, Int) -> Unit = { codes, i -> pager = codes to i }
+    var showAllPieces by rememberSaveable { mutableStateOf(false) }
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
@@ -129,9 +130,43 @@ fun ReferenceScreen(ui: UiState, vm: AppViewModel, deckKey: String) {
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            SectionTitle("Boards, best first")
                         }
                     }
+                    if (ref.library.isNotEmpty()) {
+                        item(key = "piecesTitle") {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                SectionTitle("Combo pieces")
+                                Text(
+                                    "The lines above split into sub-combos: what each part needs (cards from your hand, " +
+                                        "what earlier parts left, the Normal Summon) and what it gives. Starters first, " +
+                                        "then the most common. Hand traps listed are the most played ones.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        val shown = if (showAllPieces) ref.library else ref.library.take(6)
+                        itemsIndexed(shown, key = { i, _ -> "p$i" }) { i, lp ->
+                            ComboPieceCard(
+                                vm, key = "lib$i", title = "Piece ${i + 1}", piece = lp.piece, open = open,
+                                subtitle = "In ${lp.count} of ${ref.samples.size} lines · average board value ${fmt(lp.value)}",
+                            )
+                        }
+                        if (ref.library.size > 6) item(key = "piecesMore") {
+                            Toggle(if (showAllPieces) "Show fewer" else "All ${ref.library.size} pieces", showAllPieces) {
+                                showAllPieces = !showAllPieces
+                            }
+                        }
+                    } else {
+                        item(key = "piecesOld") {
+                            Text(
+                                "Rebuild to see the combo pieces (sub-combos) of these lines.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    item(key = "boardsTitle") { SectionTitle("Boards, best first") }
                     itemsIndexed(ref.samples, key = { i, _ -> "s$i" }) { i, s ->
                         SampleCard(vm, i + 1, s, open)
                     }

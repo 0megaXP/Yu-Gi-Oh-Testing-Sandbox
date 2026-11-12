@@ -50,11 +50,13 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
   - Searches can be stopped early and keep what they found. Cards EDOPro can't play yet are listed.
 - **Combo tree** (test): on the Play engine screen, *Combo tree vs hand traps*.
   - For your hand going first, the engine shows the main line, then for each hand trap the opponent is likely to have where it hurts that line most and how to continue from there, with the board you still reach.
+  - The main line is also split into **parts** (sub-combos): what each part needs (cards from your hand, what earlier parts left, the Normal Summon), what it gives the next parts, and which hand traps can stop it. The part each hand trap hurts most is highlighted.
   - The hand traps come from the opponent's list if you picked one (non-engine cards that interrupt from the hand, Main Deck copies first), otherwise the most played: Ash, Veiler, Imperm, Ogre, Droll, Nibiru, Fuwalos, Ghost Belle.
 - **Reference end boards** (test): from a deck's Analysis page.
   - The engine plays 12 (quick) or 30 (thorough) random opening hands going first, with no interaction from the opponent, and keeps the best board it finds for each.
   - The screen shows the median and best board value, the typical end-board cards (share of boards with each card), and every board with its hand and line.
   - Play engine lines then show where their board sits against these (e.g. "better than 80% of this deck's reference boards").
+  - **Combo pieces:** the lines are split into sub-combos and merged across hands, each with what it needs, what it gives and which of the most played hand traps can stop it (and from which step). Starters come first, then the most common pieces. A reference built with an older version needs a rebuild to show them.
   - Saved per card list (`refs/`), so editing the deck asks for a new reference.
 - **Side plan** (test): from a deck's Analysis page, pick an opponent deck to get what to side in and out, going first and going second, with the reason for each card. *Simulate their boards* first plays several of their opening turns and rates your board breakers against what they actually build.
 - **Duel simulator** (test): a full duel with the real card rules, in two modes: **You vs bot** or **Bot vs bot**.

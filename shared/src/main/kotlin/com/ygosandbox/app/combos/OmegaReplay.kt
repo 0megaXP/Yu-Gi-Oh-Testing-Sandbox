@@ -23,6 +23,12 @@ object OmegaReplay {
         val code: Long,
         /** For an activation: the chain link it was chained to (0 when it started the chain). */
         val chainedTo: Long = 0,
+        /**
+         * The card is on the other player's field because [player] put it there (Angelechy Opposition,
+         * Seneschal...): the event is [player]'s play, even though the rules core reports the other
+         * player as the one summoning it or activating its effect.
+         */
+        val onOpponentField: Boolean = false,
     )
 
     data class Turn(
@@ -142,6 +148,12 @@ object OmegaReplay {
         val lastMoveReason = HashMap<Long, Long>()
         // Set cards come with no code; the move just before names the card for its owner
         val lastToSZone = longArrayOf(0, 0)
+        // Cards a player put straight onto the other player's field (from their Extra Deck, Deck,
+        // hand, GY or banishment), keyed by (field side, code): the player who put it there.
+        // Control changes between fields (stealing) aren't counted: the taker plays the card.
+        val given = HashMap<Pair<Int, Long>, Int>()
+        // Who an event belongs to: the player who put the card on this field, else the one acting.
+        fun by(p: Int, c: Long) = given[p to c] ?: p
 
         fun zone(loc: Int) = if (loc and 0x7f == LOC_MZONE) "Monster Zone" else "Spell & Trap Zone"
         fun snapshot() = field.map { it.toList() }
@@ -174,13 +186,17 @@ object OmegaReplay {
                     val why = u32(m, 13)
                     if (c != 0L) lastMoveReason[c] = why
                     if (toL == LOC_SZONE || toL == LOC_MZONE) lastToSZone[toP] = c
-                    if (fromL and LOC_OVERLAY == 0 && (fromL == LOC_MZONE || fromL == LOC_SZONE)) {
+                    val fromField = fromL and LOC_OVERLAY == 0 && (fromL == LOC_MZONE || fromL == LOC_SZONE)
+                    val toField = toL and LOC_OVERLAY == 0 && (toL == LOC_MZONE || toL == LOC_SZONE)
+                    if (fromField) {
                         val i = field[fromP].indexOfFirst { it.first == c }
                         if (i >= 0) field[fromP].removeAt(i)
+                        if (!toField || toP != fromP) given.remove(fromP to c)
                     }
+                    if (c != 0L && toField && !fromField && fromL != 0 && fromP != toP) given[toP to c] = fromP
                     if (toL and LOC_OVERLAY == 0 && (toL == LOC_MZONE || toL == LOC_SZONE) && c != 0L) field[toP] += c to zone(toL)
                     if (c != 0L && turnNo > 0) {
-                        see(toP, c)
+                        see(by(toP, c), c)
                         val p = toP
                         // effects that bring cards out of the Deck
                         if (fromL == LOC_DECK && toL == LOC_HAND && why and 0x40L != 0L) events += Event(p, "search", c)
@@ -189,12 +205,13 @@ object OmegaReplay {
                 }
                 MSG_SUMMONING, MSG_FLIPSUMMONING -> {
                     val c = code(m, 1); val p = u8(m, 5) and 1
-                    see(p, c)
-                    events += Event(p, if (u8(m, 0) == MSG_SUMMONING) "normal_summon" else "flip_summon", c)
+                    see(by(p, c), c)
+                    events += Event(by(p, c), if (u8(m, 0) == MSG_SUMMONING) "normal_summon" else "flip_summon", c,
+                        onOpponentField = by(p, c) != p)
                 }
                 MSG_SPSUMMONING -> {
                     val c = code(m, 1); val p = u8(m, 5) and 1
-                    see(p, c)
+                    see(by(p, c), c)
                     val r = lastMoveReason[c] ?: REASON_SPSUMMON
                     val action = when {
                         r and REASON_LINK != 0L -> "link_summon"
@@ -204,17 +221,20 @@ object OmegaReplay {
                         r and REASON_RITUAL != 0L -> "ritual_summon"
                         else -> "special_summon"
                     }
-                    events += Event(p, action, c)
+                    events += Event(by(p, c), action, c, onOpponentField = by(p, c) != p)
                 }
                 MSG_SET -> {
                     val p = u8(m, 5) and 1
                     val c = code(m, 1).takeIf { it != 0L } ?: lastToSZone[p]
-                    if (c != 0L) { see(p, c); events += Event(p, "set", c) }
+                    if (c != 0L) { see(by(p, c), c); events += Event(by(p, c), "set", c, onOpponentField = by(p, c) != p) }
                 }
                 MSG_CHAINING -> {
                     val c = code(m, 1); val p = u8(m, 5) and 1
-                    see(p, c)
-                    events += Event(p, "activate", c, chain.lastOrNull() ?: 0)
+                    // the controller's location (MSG_CHAINING: controller, location, ...)
+                    val onField = u8(m, 6).let { it and LOC_OVERLAY == 0 && (it == LOC_MZONE || it == LOC_SZONE) }
+                    val who = if (onField) by(p, c) else p
+                    see(who, c)
+                    events += Event(who, "activate", c, chain.lastOrNull() ?: 0, onOpponentField = who != p)
                     chain += c
                 }
                 MSG_CHAIN_END -> chain.clear()

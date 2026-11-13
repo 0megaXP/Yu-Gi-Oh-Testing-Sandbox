@@ -230,7 +230,9 @@ class MatchReader(private val claude: ComboReader) {
                 append(
                     "Write every turn of this game: a one-line summary, the main cards played, the board that side " +
                         "ended on, and the interruptions used (by whom, on what). Then the turning points. Use exact " +
-                        "card names."
+                        "card names. A monster a player puts on the opponent's field (for example with Angelechy " +
+                        "Opposition) and its mandatory effects there, like Angelechy Seneschal's, are part of that " +
+                        "player's turn: not a new turn and not an interruption by the opponent."
                 )
             }
             val r = runCatching {

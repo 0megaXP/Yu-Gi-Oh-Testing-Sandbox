@@ -255,11 +255,17 @@ class ReplayViewModel : ViewModel() {
             turnNo = 0
         }
         for (e in r.events) {
+            val actor = turnEvents.firstOrNull { it.code != null }?.player
             when {
                 e.action == "game_end" -> closeGame(e)
                 e.action == "turn" -> closeTurn()
+                // A card of the archetype's player shown on the other side during their turn: one they
+                // put on the opponent's field (Angelechy Opposition, Seneschal), with its forced
+                // effects. It's still their turn and their play, not the opponent starting a turn.
+                e.code != null && actor == side && e.player == other && e.code in allowed && e.code !in handTraps ->
+                    turnEvents += e.copy(player = side)
                 e.code != null && turnEvents.isNotEmpty() && e.action != "activate" &&
-                    turnEvents.firstOrNull { it.code != null }?.player.let { it != null && it != e.player } -> {
+                    actor.let { it != null && it != e.player } -> {
                     closeTurn()
                     turnEvents += e
                 }

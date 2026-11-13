@@ -68,7 +68,7 @@ object OmegaImport {
         val turns = g.turns.map { t ->
             val mine = t.events.filter { it.player == t.player && it.action != "search" && it.action != "send_to_gy" }
             val summary = mine.groupBy { it.action }.entries.joinToString(" · ") { (a, es) ->
-                label(a) + ": " + es.joinToString(", ") { cn.name(it.code) }
+                label(a) + ": " + es.joinToString(", ") { cn.name(it.code) + if (it.onOpponentField) " (on the opponent's field)" else "" }
             }
             TurnRecord(
                 turn = t.number, ours = t.player == side, summary = summary,
@@ -105,7 +105,7 @@ object OmegaImport {
         val hand = g.openingHands[side].map(::c)
         val line = if (g.first == side && first != null && hand.size >= 5) {
             val steps = first.events.filter { it.player == side }.map { e ->
-                ComboStep(null, e.action, c(e.code), cn.name(e.code), "")
+                ComboStep(null, e.action, c(e.code), cn.name(e.code), if (e.onOpponentField) "on the opponent's field" else "")
             }
             val interrupts = first.events.filter { it.player != side && it.action == "activate" }.map { e ->
                 cn.name(e.code) + if (e.chainedTo != 0L) " on ${cn.name(e.chainedTo)}" else ""

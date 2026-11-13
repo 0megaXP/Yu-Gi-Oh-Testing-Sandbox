@@ -7,6 +7,9 @@ on:
     branches: [screens]
   workflow_dispatch:
 
+permissions:
+  contents: write # pushes the screenshots to the screens-out branch
+
 jobs:
   screens:
     runs-on: ubuntu-latest
@@ -53,3 +56,12 @@ jobs:
         with:
           name: screens
           path: screens/
+
+      # Also as a branch, so the pictures can be looked at without downloading the artifact.
+      - name: Push the screenshots to screens-out
+        run: |
+          cd screens
+          git init -q -b screens-out
+          git add -A
+          git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "Screenshots of ${GITHUB_SHA::7}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" screens-out

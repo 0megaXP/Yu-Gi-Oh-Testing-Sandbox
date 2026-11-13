@@ -35,7 +35,10 @@ jobs:
           cd engine
           tools/bootstrap.sh
           python3 tools/make_pack.py third_party/CardScripts data ../desktop/resources/common/ygoe
-          cmake -S . -B build-linux -DCMAKE_BUILD_TYPE=Release -DYGOE_BUILD_JNI=ON -DYGOE_BUILD_CLI=OFF
+          # Own copy of the C++ runtime, hidden: the UI's native library also carries one, and mixing
+          # the two in one process crashed on the first number written to a string stream.
+          cmake -S . -B build-linux -DCMAKE_BUILD_TYPE=Release -DYGOE_BUILD_JNI=ON -DYGOE_BUILD_CLI=OFF \
+            "-DCMAKE_SHARED_LINKER_FLAGS=-static-libstdc++ -static-libgcc -Wl,--exclude-libs,ALL"
           cmake --build build-linux -j"$(nproc)" --target ygoe_jni
           mkdir -p ../desktop/resources/linux
           cp build-linux/libygoe_jni.so ../desktop/resources/linux/

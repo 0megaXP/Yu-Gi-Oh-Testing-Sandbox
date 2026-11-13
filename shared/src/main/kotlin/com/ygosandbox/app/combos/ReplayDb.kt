@@ -73,10 +73,24 @@ data class ReplayGameInfo(
     val winner: Int?,
     val recording: Int,
     val turns: Int,
+    /** The recorded player's Main + Extra Deck (empty when the replay has none), to replay their turns later. */
+    val deck: List<Long> = emptyList(),
 )
 
 data class ReplayDatabase(val games: List<ReplayGameInfo>, val turns: List<ReplayTurn>, val unreadable: List<String>) {
     val ids: Set<String> get() = (games.map { it.id } + unreadable).toSet()
+
+    /** Turns the engine can replay (a first turn with the opening hand) and hasn't yet. */
+    fun pending(): List<ReplayTurn> {
+        val withDeck = games.filter { it.deck.isNotEmpty() }.map { it.id }.toSet()
+        return turns.filter { it.check == null && it.hand.size >= 5 && it.turn == 1 && it.steps.size >= 3 && it.game in withDeck }
+    }
+
+    /** Games whose first turn could be replayed but whose deck wasn't kept (analysed by an older version). */
+    val missingDecks: Set<String> get() {
+        val need = turns.filter { it.check == null && it.hand.size >= 5 && it.turn == 1 && it.steps.size >= 3 }.map { it.game }.toSet()
+        return games.filter { it.deck.isEmpty() && it.id in need }.map { it.id }.toSet()
+    }
 }
 
 /** Every analysed YGO Omega replay, for all decks: files/replaydb.json. */
@@ -104,6 +118,7 @@ class ReplayDbStore {
         .put("games", JSONArray(db.games.map { g ->
             JSONObject().put("id", g.id).put("savedAt", g.savedAt).put("archetypes", JSONArray(g.archetypes))
                 .put("first", g.first).put("winner", g.winner ?: JSONObject.NULL).put("recording", g.recording).put("turns", g.turns)
+                .put("deck", JSONArray(g.deck))
         }))
         .put("turns", JSONArray(db.turns.map { t ->
             JSONObject().put("game", t.game).put("player", t.player).put("archetype", t.archetype).put("turn", t.turn)
@@ -125,7 +140,7 @@ class ReplayDbStore {
         unreadable = o.optJSONArray("unreadable").strings(),
         games = o.optJSONArray("games").objects().map { g ->
             ReplayGameInfo(g.optString("id"), g.optLong("savedAt"), g.optJSONArray("archetypes").strings(), g.optInt("first"),
-                g.intOrNull("winner"), g.optInt("recording"), g.optInt("turns"))
+                g.intOrNull("winner"), g.optInt("recording"), g.optInt("turns"), g.optJSONArray("deck").longs())
         },
         turns = o.optJSONArray("turns").objects().map { t ->
             ReplayTurn(
@@ -169,7 +184,8 @@ object UniversalReplay {
         val id = OmegaImport.id(bytes)
         fun c(x: Long) = cn.canonical(x)
         val arche = (0..1).map { archetype(g.seen[it], cn, handTraps) }
-        val info = ReplayGameInfo(id, OmegaImport.savedAt(fileName, 0L), arche, g.first, g.winner, g.deckOwner, g.turns.size)
+        val info = ReplayGameInfo(id, OmegaImport.savedAt(fileName, 0L), arche, g.first, g.winner, g.deckOwner, g.turns.size,
+            g.deck?.first.orEmpty())
         val turns = g.turns.mapIndexed { i, t ->
             val p = t.player
             val mine = t.events.filter { it.player == p }
@@ -348,11 +364,15 @@ object ReplayLearning {
                 var data = database()
                 val known = data.ids
                 val fresh = files.filter { (_, b) -> OmegaImport.id(b) !in known }
-                val games = ArrayList(data.games)
+                // games analysed before decks were kept: take the deck from their file again
+                val missing = data.missingDecks
+                val refill = files.mapNotNull { (_, b) ->
+                    val id = OmegaImport.id(b)
+                    if (id !in missing) null else runCatching { OmegaReplay.read(b).deck?.first }.getOrNull()?.let { id to it }
+                }.toMap()
+                val games = ArrayList(data.games.map { g -> refill[g.id]?.let { g.copy(deck = it) } ?: g })
                 val turns = ArrayList(data.turns)
                 val unreadable = ArrayList(data.unreadable)
-                // the recorded player's deck per game, to replay their first turn
-                val decks = HashMap<String, List<Long>>()
                 fresh.forEachIndexed { i, (name, bytes) ->
                     _state.update { it.copy(progress = "Reading ${i + 1} of ${fresh.size}") }
                     BackgroundWork.update("replaydb", "Reading ${i + 1} of ${fresh.size}", 0.3f * i / fresh.size)
@@ -360,14 +380,17 @@ object ReplayLearning {
                     if (r == null) { unreadable += OmegaImport.id(bytes); return@forEachIndexed }
                     games += r.first
                     turns += r.second
-                    runCatching { OmegaReplay.read(bytes).deck?.first }.getOrNull()?.let { decks[r.first.id] = it }
                     added++
+                    // saved as it goes: closing the app keeps what was read
+                    if (added % 10 == 0) save(ReplayDatabase(games, turns, unreadable))
                 }
                 data = ReplayDatabase(games, turns, unreadable)
                 save(data)
 
-                // the engine replays the new first turns it has the full deck and hand for
-                val todo = turns.filter { t -> t.check == null && t.hand.size >= 5 && t.turn == 1 && t.game in decks && t.steps.size >= 3 }
+                // the engine replays every first turn it has the deck and hand for and hasn't checked
+                // yet: the new ones, and any left when the app was closed during an earlier run
+                val decks = games.filter { it.deck.isNotEmpty() }.associate { it.id to it.deck }
+                val todo = data.pending()
                 val policies = PolicyStore()
                 todo.forEachIndexed { i, t ->
                     _state.update { it.copy(progress = "Engine: line ${i + 1} of ${todo.size}") }
@@ -403,7 +426,7 @@ object ReplayLearning {
                         save(cur.copy(turns = cur.turns.map { if (it.key == t.key && it.player == t.player) it.copy(check = check) else it }))
                     }
                 }
-                _state.update { it.copy(note = "$added new game${if (added == 1) "" else "s"} analysed" +
+                _state.update { it.copy(note = (if (added == 0) "No new games" else "$added new game${if (added == 1) "" else "s"} analysed") +
                     (if (checked > 0) "; the engine replayed $checked first turn${if (checked == 1) "" else "s"}, $verified verified" else "") + ".") }
             } catch (e: CancellationException) {
                 _state.update { it.copy(note = "Stopped. $added new games analysed.") }

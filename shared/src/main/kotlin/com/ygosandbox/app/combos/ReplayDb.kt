@@ -404,7 +404,7 @@ object ReplayLearning {
                 // older games whose file wasn't in this run (outside the period, deleted) stay as they
                 // were read: not asked for again
                 for (i in games.indices) if (games[i].reader < UniversalReplay.VERSION) games[i] = games[i].copy(reader = UniversalReplay.VERSION)
-                data = ReplayDatabase(games, turns, unreadable)
+                data = ReplayDatabase(games.toList(), turns.toList(), unreadable.toList())
                 save(data)
 
                 // the engine replays every first turn it has the deck and hand for and hasn't checked
@@ -460,8 +460,11 @@ object ReplayLearning {
     }
 
     private fun save(d: ReplayDatabase) {
-        store.save(d)
-        cache = d
+        // A copy: the reading loop keeps adding to its own lists while the screens read this one
+        // (sharing them crashed the Settings screen with a ConcurrentModificationException).
+        val snapshot = ReplayDatabase(d.games.toList(), d.turns.toList(), d.unreadable.toList())
+        store.save(snapshot)
+        cache = snapshot
         _state.update { it.copy(revision = it.revision + 1) }
     }
 }

@@ -11,10 +11,10 @@ permissions:
 
 # One build per branch at a time: two main builds running side by side could publish out of
 # order, and GitHub marks the last one published as "latest", so the app would be offered an
-# older version. A newer push waits for the running build; an older waiting one is skipped.
+# older version. A newer push cancels the running build: only the newest commit gets built.
 concurrency:
   group: build-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -40,12 +40,31 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      # The engine's C++ is compiled through ccache, kept between builds: when the engine
+      # didn't change, its compile takes seconds instead of minutes.
+      - name: Engine version
+        run: echo "ENGINE_SHA=$(git rev-parse HEAD:engine)" >> "$GITHUB_ENV"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-android-${{ env.ENGINE_SHA }}
+          restore-keys: ccache-android-
+
+      - name: Install ccache
+        run: sudo apt-get install -y -q --no-install-recommends ccache
+
       - uses: gradle/actions/setup-gradle@v4
 
+      # Only arm64 (every phone the app runs on); the emulator ABI would be a second full compile.
       - name: Build
+        env:
+          YGOE_CCACHE: "1"
         run: |
+          export CCACHE_DIR="$HOME/.cache/ccache"
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon
+          ./gradlew assembleRelease --no-daemon -Pygoe.abis=arm64-v8a
+          ccache -s | head -5 || true
           VERSION="0.0.$GITHUB_RUN_NUMBER"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           mv app/build/outputs/apk/release/*.apk "app/build/outputs/apk/release/YGOSandbox-$VERSION.apk"
@@ -74,12 +93,25 @@ jobs:
   # ---------------- Windows app ----------------
 
   # The engine for Windows, cross-compiled on Linux (MinGW-w64): ygoe_jni.dll + the card pack.
+  # Kept in a cache per engine commit: rebuilt (and re-checked on Windows) only when the engine changes.
   engine-windows:
     runs-on: ubuntu-latest
+    outputs:
+      fresh: ${{ steps.cache.outputs.cache-hit != 'true' }}
     steps:
       - uses: actions/checkout@v4
 
+      - name: Engine version
+        run: echo "ENGINE_SHA=$(git rev-parse HEAD:engine)" >> "$GITHUB_ENV"
+
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: engine-windows/
+          key: engine-windows-${{ env.ENGINE_SHA }}
+
       - name: Fetch the engine submodule
+        if: steps.cache.outputs.cache-hit != 'true'
         env:
           ENGINE_TOKEN: ${{ secrets.ENGINE_TOKEN }}
         run: |
@@ -87,11 +119,13 @@ jobs:
             submodule update --init --depth 1 engine
 
       - uses: actions/setup-java@v4
+        if: steps.cache.outputs.cache-hit != 'true'
         with:
           distribution: temurin
           java-version: 17
 
       - name: Build the engine for Windows
+        if: steps.cache.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q g++-mingw-w64-x86-64-posix
@@ -138,7 +172,9 @@ jobs:
           cp -r engine-windows/ygoe desktop/resources/common/ygoe
 
       # Load the DLL through Java on Windows and run an analysis, a cancel, a profile and a side plan.
+      # Only for a newly built engine: a cached one was already checked when it was built.
       - name: Check the engine on Windows
+        if: needs.engine-windows.outputs.fresh == 'true'
         run: |
           mkdir -p jni-classes
           javac -d jni-classes engine/tests/jni/com/ygoengine/*.java

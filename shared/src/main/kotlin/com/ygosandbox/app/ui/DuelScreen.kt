@@ -268,7 +268,7 @@ private fun DuelBoardScreen(d: DuelUi, vm: AppViewModel, onOpen: (List<Long>, In
         } else {
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 8.dp)) {
                 board(58.dp, 42)
-                LogPanel(d.log, d.names, colors, showLog) { showLog = !showLog }
+                LogPanel(d.log, d.names, colors, showLog, onToggle = { showLog = !showLog })
                 Spacer(Modifier.height(8.dp))
             }
 

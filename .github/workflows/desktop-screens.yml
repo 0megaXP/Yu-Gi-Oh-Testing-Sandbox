@@ -50,6 +50,8 @@ jobs:
             YGO_TOUR="$PWD/screens/$size" YGO_TOUR_SIZE=$size YGO_TOUR_DECKS="$PWD/engine/decks" \
               timeout 1200 xvfb-run -a -s "-screen 0 1920x1080x24" ./gradlew :desktop:run --no-daemon || true
           done
+          # Crash reports, if the app crashed.
+          cp desktop/hs_err*.log screens/ 2>/dev/null || true
           ls -R screens
 
       - uses: actions/upload-artifact@v4

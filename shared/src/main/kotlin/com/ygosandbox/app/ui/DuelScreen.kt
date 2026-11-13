@@ -257,7 +257,8 @@ private fun DuelBoardScreen(d: DuelUi, vm: AppViewModel, onOpen: (List<Long>, In
                             .padding(horizontal = 8.dp),
                     ) { board(slot, hand) }
                 }
-                Column(Modifier.width(380.dp).fillMaxHeight().padding(end = 12.dp, bottom = 12.dp)) {
+                // A wider side panel on a big window, so log lines wrap less.
+                Column(Modifier.width(if (maxWidth >= 1400.dp) 460.dp else 380.dp).fillMaxHeight().padding(end = 12.dp, bottom = 12.dp)) {
                     LogPanel(d.log, d.names, colors, open = true, onToggle = {}, fill = true, modifier = Modifier.weight(1f))
                     Spacer(Modifier.height(8.dp))
                     Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, tonalElevation = 3.dp, shape = RoundedCornerShape(12.dp)) {
@@ -607,7 +608,8 @@ private fun LogPanel(
                 if (!fill) Text(if (open) "Show less" else "Show all", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
             }
             // Which colour is which player.
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(vertical = 4.dp)) {
+            // Wraps onto two lines when the names are long (bot names carry the deck name).
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(vertical = 4.dp)) {
                 names.forEachIndexed { p, n ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(8.dp).clip(RoundedCornerShape(4.dp)).background(colors.of(p)))

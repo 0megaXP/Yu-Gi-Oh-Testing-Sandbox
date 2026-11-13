@@ -39,11 +39,36 @@ class DesktopPlatform(private val resources: File?) : Platform {
 
     override val updateAssetSuffix = ".msi"
 
-    /** Runs the new installer (it upgrades this copy in place) and closes the app so files can be replaced. */
+    /**
+     * Installs the update once this app has fully closed, then opens the new version.
+     *
+     * The installer has to wait: started while the app still runs, it removes the old version
+     * but can't replace the files the app holds open, which left no app at all. It also runs
+     * from a copy in %TEMP%, outside the app's own folders, and writes a log there
+     * (YGOSandbox-update.log) to look at if an update ever fails.
+     */
     override fun installUpdate(file: File) {
-        ProcessBuilder("msiexec", "/i", file.absolutePath, "/passive", "/norestart").start()
+        val tmp = File(System.getProperty("java.io.tmpdir"))
+        val msi = File(tmp, "YGOSandbox-update.msi")
+        file.copyTo(msi, overwrite = true)
+        val log = File(tmp, "YGOSandbox-update.log")
+        val exe = ProcessHandle.current().info().command().orElse("")
+        val pid = ProcessHandle.current().pid()
+        fun q(x: String) = "'" + x.replace("'", "''") + "'"
+        val script = File(tmp, "YGOSandbox-update.ps1")
+        script.writeText(
+            """
+            Wait-Process -Id $pid -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 1
+            ${'$'}p = Start-Process msiexec -ArgumentList @('/i', ${q("\"" + msi.absolutePath + "\"")}, '/passive', '/norestart', '/l*v', ${q("\"" + log.absolutePath + "\"")}) -Wait -PassThru
+            ${'$'}exe = ${q(exe)}
+            if (${'$'}exe -and (Test-Path ${'$'}exe)) { Start-Process ${'$'}exe }
+            """.trimIndent()
+        )
+        ProcessBuilder("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", script.absolutePath)
+            .start()
         Thread {
-            Thread.sleep(1500)
+            Thread.sleep(500)
             exitProcess(0)
         }.start()
     }

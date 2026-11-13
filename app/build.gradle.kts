@@ -50,6 +50,9 @@ android {
         compose = true
         buildConfig = true
     }
+
+    // Screens and logic shared with the Windows app (desktop/); Android-only code stays in src/main/java.
+    sourceSets["main"].java.srcDir("../shared/src/main/kotlin")
 }
 
 dependencies {
@@ -75,6 +78,10 @@ dependencies {
     // Free combo reading: on-device text recognition (model bundled in the app, works offline).
     implementation("com.google.mlkit:text-recognition:16.0.1")
 
-    // Card pictures, cached on the phone after the first view.
-    implementation("io.coil-kt:coil-compose:2.7.0")
+    // Card pictures, cached after the first view (Coil 3 also runs on the desktop).
+    implementation("io.coil-kt.coil3:coil-compose:3.0.4")
+    implementation("io.coil-kt.coil3:coil-network-okhttp:3.0.4")
+
+    // Streaming JSON for the card database (Android's JsonReader isn't on the desktop).
+    implementation("com.google.code.gson:gson:2.11.0")
 }

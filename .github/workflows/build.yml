@@ -1,4 +1,4 @@
-name: Build APK
+name: Build APK and Windows app
 
 on:
   push:
@@ -68,3 +68,110 @@ jobs:
             --title "YGO Sandbox $VERSION" \
             --notes "${NOTES:-New build}" \
             --latest=$MARK
+
+  # ---------------- Windows app ----------------
+
+  # The engine for Windows, cross-compiled on Linux (MinGW-w64): ygoe_jni.dll + the card pack.
+  engine-windows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch the engine submodule
+        env:
+          ENGINE_TOKEN: ${{ secrets.ENGINE_TOKEN }}
+        run: |
+          git -c "url.https://x-access-token:${ENGINE_TOKEN}@github.com/.insteadOf=https://github.com/" \
+            submodule update --init --depth 1 engine
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Build the engine for Windows
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q g++-mingw-w64-x86-64-posix
+          engine/tools/build_windows.sh "$PWD/engine-windows"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-windows
+          path: engine-windows/
+
+  # The Windows app: checks the engine DLL on real Windows, then packages the MSI installer.
+  windows:
+    needs: engine-windows
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      YGO_DESKTOP_ONLY: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch the engine submodule
+        env:
+          ENGINE_TOKEN: ${{ secrets.ENGINE_TOKEN }}
+        run: |
+          git -c "url.https://x-access-token:${ENGINE_TOKEN}@github.com/.insteadOf=https://github.com/" \
+            submodule update --init --depth 1 engine
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: engine-windows
+          path: engine-windows
+
+      - name: Put the engine in the app's resources
+        run: |
+          cp engine-windows/ygoe_jni.dll desktop/resources/windows/
+          mkdir -p desktop/resources/common
+          cp -r engine-windows/ygoe desktop/resources/common/ygoe
+
+      # Load the DLL through Java on Windows and run an analysis, a cancel, a profile and a side plan.
+      - name: Check the engine on Windows
+        run: |
+          mkdir -p jni-classes
+          javac -d jni-classes engine/tests/jni/com/ygoengine/*.java
+          java -Djava.library.path=desktop/resources/windows -cp jni-classes com.ygoengine.JniSmoke \
+            desktop/resources/common/ygoe engine/examples | grep -v '^progress'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build the installer
+        run: |
+          ./gradlew :desktop:packageMsi --no-daemon
+          VERSION="0.0.$GITHUB_RUN_NUMBER"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          mkdir -p out
+          mv desktop/build/compose/binaries/main/msi/*.msi "out/YGOSandbox-$VERSION.msi"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: YGOSandbox-windows
+          path: out/*.msi
+
+  # Adds the installer to the release the Android job published.
+  release-windows:
+    if: github.ref == 'refs/heads/main'
+    needs: [build, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: YGOSandbox-windows
+          path: out
+
+      - name: Attach the installer to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "v0.0.$GITHUB_RUN_NUMBER" out/*.msi --clobber --repo "${{ github.repository }}"
+

@@ -6,7 +6,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import com.ygosandbox.app.work.BackgroundWork
+import com.ygosandbox.app.work.AndroidWork
 import com.ygosandbox.app.ui.SandboxApp
 import com.ygosandbox.app.ui.SandboxTheme
 
@@ -29,8 +29,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        BackgroundWork.install(this)
-        if (savedInstanceState == null && BackgroundWork.needsNotificationPermission(this))
+        AndroidWork.install(this)
+        if (savedInstanceState == null && AndroidWork.needsNotificationPermission(this))
             askNotifications.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         setContent {
             SandboxTheme {

@@ -1,0 +1,76 @@
+package com.ygosandbox.app.platform
+
+import android.content.Context
+import android.content.SharedPreferences
+import com.ygoengine.YgoEngine
+import com.ygoengine.open
+import com.ygosandbox.app.BuildConfig
+import com.ygosandbox.app.combos.AndroidFrames
+import com.ygosandbox.app.combos.AndroidFreeReader
+import com.ygosandbox.app.combos.CardNames
+import com.ygosandbox.app.combos.Frame
+import com.ygosandbox.app.combos.FreeReader
+import com.ygosandbox.app.update.AndroidUpdater
+import com.ygosandbox.app.work.AndroidWork
+import java.io.File
+
+/** The Android phone app's [Platform]. */
+class AndroidPlatform(context: Context) : Platform {
+    private val app: Context = context.applicationContext
+
+    override val name = "Android"
+    override val versionName: String = BuildConfig.VERSION_NAME
+    override val filesDir: File get() = app.filesDir
+    override val cacheDir: File get() = app.cacheDir
+
+    override fun preferences(name: String): KeyValueStore =
+        SharedPrefsStore(app.getSharedPreferences(name, Context.MODE_PRIVATE))
+
+    override suspend fun openEngine(): YgoEngine = YgoEngine.open(app)
+
+    override val updateAssetSuffix = ".apk"
+    override fun canInstallUpdates() = AndroidUpdater.canInstall(app)
+    override fun requestInstallPermission() = AndroidUpdater.openInstallPermissionSettings(app)
+    override fun installUpdate(file: File) = AndroidUpdater.install(app, file)
+
+    override fun onWorkStarted(first: Boolean) = AndroidWork.onWorkStarted(first)
+
+    override val interruptedHint =
+        "Allow YGO Sandbox to run without battery restrictions (Android settings → Apps → YGO Sandbox → Battery) " +
+            "and read it again: it continues where it stopped."
+
+    override val video: VideoPlatform = object : VideoPlatform {
+        override suspend fun extractFrames(
+            video: File, dir: File, maxFrames: Int, stepMs: Long,
+            onPosition: (Long, Long) -> Unit, onProgress: (Float) -> Unit,
+        ): List<Frame> = AndroidFrames.extract(video, dir, maxFrames, stepMs, onPosition, onProgress)
+
+        override suspend fun readFrames(
+            frames: List<Frame>, cn: CardNames, allowed: Set<Long>, handTraps: Set<Long>, title: String,
+            description: String, extraDeck: Set<Long>, captions: String, onProgress: (Float) -> Unit,
+        ): FreeReader.Result = AndroidFreeReader.read(frames, cn, allowed, handTraps, title, description, extraDeck, captions, onProgress)
+    }
+}
+
+/** [KeyValueStore] over SharedPreferences, so settings saved by earlier versions stay. */
+private class SharedPrefsStore(private val p: SharedPreferences) : KeyValueStore {
+    override fun getString(key: String, default: String?) = p.getString(key, default)
+    override fun getLong(key: String, default: Long) = p.getLong(key, default)
+    override fun getInt(key: String, default: Int) = p.getInt(key, default)
+    override fun getBoolean(key: String, default: Boolean) = p.getBoolean(key, default)
+    override fun getFloat(key: String, default: Float) = p.getFloat(key, default)
+    override fun contains(key: String) = p.contains(key)
+    override fun edit(): KeyValueStore.Editor = Editor(p.edit())
+
+    private class Editor(private val e: SharedPreferences.Editor) : KeyValueStore.Editor {
+        override fun putString(key: String, value: String?) = apply { e.putString(key, value) }
+        override fun putLong(key: String, value: Long) = apply { e.putLong(key, value) }
+        override fun putInt(key: String, value: Int) = apply { e.putInt(key, value) }
+        override fun putBoolean(key: String, value: Boolean) = apply { e.putBoolean(key, value) }
+        override fun putFloat(key: String, value: Float) = apply { e.putFloat(key, value) }
+        override fun remove(key: String) = apply { e.remove(key) }
+        override fun clear() = apply { e.clear() }
+        override fun apply() = e.apply()
+        override fun commit() = e.commit()
+    }
+}

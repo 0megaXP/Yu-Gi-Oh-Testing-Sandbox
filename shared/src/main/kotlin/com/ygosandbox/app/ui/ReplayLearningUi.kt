@@ -98,7 +98,7 @@ fun ReplayLearningCard(vm: AppViewModel) {
                             val known = data.ids
                             val fresh = fs.filter { (_, b) -> OmegaImport.id(b) !in known }
                             // lines the engine hasn't replayed yet (the app was closed during a run)
-                            val waiting = data.pending().size + data.missingDecks.size
+                            val waiting = data.pending().size + data.outdated.size
                             note = if (fresh.isEmpty() && waiting == 0) "No new replays from that period in the folder." else null
                             // all the period's files: they also give back decks older runs didn't keep
                             if (fresh.isNotEmpty() || waiting > 0) ReplayLearning.analyze(fs, vm.db, vm::engine)
@@ -121,9 +121,9 @@ fun ReplayLearningCard(vm: AppViewModel) {
                 Text(state.progress, style = MaterialTheme.typography.bodySmall)
             }
             (note ?: state.note)?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-            val waiting = remember(state.revision, state.running) { ReplayLearning.database().let { it.pending().size + it.missingDecks.size } }
+            val waiting = remember(state.revision, state.running) { ReplayLearning.database().let { it.pending().size + it.outdated.size } }
             if (waiting > 0 && !state.running) Text(
-                "$waiting line${if (waiting == 1) "" else "s"} still to be replayed by the engine: Analyze replays continues.",
+                "$waiting game${if (waiting == 1) "" else "s"} or line${if (waiting == 1) "" else "s"} still to be read again or replayed by the engine: Analyze replays continues.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary,
             )
             Learned(vm, state.revision)

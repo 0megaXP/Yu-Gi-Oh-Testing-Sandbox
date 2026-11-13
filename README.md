@@ -79,8 +79,9 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
     - the opponent's interruptions and what they answered;
     - whether it was played under the opponent's Mulcharmy (Fuwalos, Purulia) or Droll & Lock Bird;
     - how it went: the game's result, how many activations the opponent had next turn, and whether the player lost then. Together these give a performance from 0 to 100.
+  - **Both players' information:** a replay of a played game keeps both decks and the game as each player saw it, so both opening hands and every draw are known. The app merges the two views.
   - **What the engine learns:**
-    - It replays the recorded player's first turns with that player's exact deck. Verified lines keep their combo pieces, tagged with the Mulcharmy / Droll condition and weighted by performance, and the move policy learns from them.
+    - It replays the opening turn of whoever went first (you or the opponent) with that player's exact deck. Verified lines keep their combo pieces, tagged with the Mulcharmy / Droll condition and weighted by performance, and the move policy learns from them.
     - Those pieces are used by the Play engine, the combo tree and the duel bots for any deck that can play them.
   - **Per archetype:**
     - **In Settings:** games and record going first and second, average activations, the cards where the deck is stopped most (and how often it lost after), Mulcharmy / Droll turns and the best line.

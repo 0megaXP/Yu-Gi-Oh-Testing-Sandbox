@@ -9,10 +9,12 @@ import java.util.zip.Inflater
 /**
  * A YGO Omega replay file (.bytes, in Omega's "Replays" folder), read exactly.
  *
- * The file is raw-deflated BSON: the game settings, the recording player's deck (Omega's deck
- * code) and the duel's messages as the rules core sent them to that player (the classic YGOPro
- * message layout). Nothing is guessed: every activation, summon, move and draw is there with
- * its card's passcode. The opponent's hidden cards (their draws, Set cards) have no code.
+ * The file is raw-deflated BSON: the game settings, the players' decks (Omega's deck codes,
+ * "Deck0" / "Deck1") and the duel's messages as the rules core sent them (the classic YGOPro
+ * message layout): "GameMessages" as the recording player saw them, and, in replays of games
+ * that were played, "SharedGameMessages" as the other player saw them. Each stream hides the
+ * other player's draws and hand, so the two together give both players' full information:
+ * both decks, both opening hands, every draw. Nothing is guessed.
  */
 object OmegaReplay {
 
@@ -58,6 +60,10 @@ object OmegaReplay {
         val players: List<Long> = listOf(0L, 0L),
         /** GameSettings.Mode as Omega writes it. */
         val mode: Int = -1,
+        /** Per player: their deck (main + extra, side), when the replay keeps it. */
+        val decks: List<Pair<List<Long>, List<Long>>?> = listOf(null, null),
+        /** Both players' hidden cards are known (the replay has both players' views). */
+        val fullInfo: Boolean = false,
     )
 
     class NotAReplay(msg: String) : Exception(msg)
@@ -71,15 +77,56 @@ object OmegaReplay {
         @Suppress("UNCHECKED_CAST")
         val msgs = (doc["GameMessages"] as? List<Any?>)?.filterIsInstance<ByteArray>()
             ?: throw NotAReplay("Not a YGO Omega replay file (no duel messages)")
-        val deckKey = doc.keys.firstOrNull { it.startsWith("Deck") }
-        val deck = (doc[deckKey] as? String)?.let { runCatching { deckCode(it) }.getOrNull() }
-        val owner = deckKey?.removePrefix("Deck")?.toIntOrNull() ?: 0
+        val decks = (0..1).map { p -> (doc["Deck$p"] as? String)?.let { runCatching { deckCode(it) }.getOrNull() } }
+        @Suppress("UNCHECKED_CAST")
+        val shared = (doc["SharedGameMessages"] as? List<Any?>)?.filterIsInstance<ByteArray>().orEmpty()
+        // whose view each stream is: the player whose draws it names
+        val owner = viewer(msgs) ?: doc.keys.firstOrNull { it.startsWith("Deck") }?.removePrefix("Deck")?.toIntOrNull() ?: 0
         fun num(x: Any?) = (x as? Number)?.toLong() ?: 0L
         @Suppress("UNCHECKED_CAST")
         val settings = doc["GameSettings"] as? Map<String, Any?>
-        return messages(msgs, deck, owner).copy(
+        val mine = messages(msgs, decks[owner], owner)
+        val other = shared.takeIf { it.isNotEmpty() && viewer(it) == 1 - owner }?.let { messages(it, decks[owner], owner) }
+        val game = if (other != null && other.turns.size == mine.turns.size) merge(mine, other, owner) else mine
+        return game.copy(
             players = listOf(num(doc["Player0"]), num(doc["Player1"])),
             mode = settings?.get("Mode")?.let { num(it).toInt() } ?: -1,
+            decks = decks,
+        )
+    }
+
+    /** The player whose draws a message stream names (its viewer), or null when it can't tell. */
+    private fun viewer(msgs: List<ByteArray>): Int? {
+        val known = intArrayOf(0, 0)
+        for (m in msgs) {
+            if (m.isEmpty() || u8(m, 0) != MSG_DRAW) continue
+            val p = u8(m, 1) and 1
+            for (i in 0 until u8(m, 2)) if (code(m, 3 + 4 * i) != 0L) known[p]++
+        }
+        return when {
+            known[0] > known[1] -> 0
+            known[1] > known[0] -> 1
+            else -> null
+        }
+    }
+
+    /**
+     * One game from both players' views: each player's own actions, hand, field and seen cards
+     * come from the stream where their cards are named; the turns are the same in both.
+     */
+    private fun merge(a: Game, b: Game, viewerA: Int): Game {
+        fun src(p: Int) = if (p == viewerA) a else b
+        val turns = a.turns.indices.map { i ->
+            val t = a.turns[i]
+            val own = src(t.player).turns[i].events.filter { it.player == t.player }
+            val others = src(1 - t.player).turns[i].events.filter { it.player != t.player }
+            Turn(t.number, t.player, own + others, (0..1).map { p -> src(p).turns[i].endField[p] })
+        }
+        return a.copy(
+            turns = turns,
+            openingHands = (0..1).map { src(it).openingHands[it] },
+            seen = (0..1).map { a.seen[it] + b.seen[it] },
+            fullInfo = true,
         )
     }
 

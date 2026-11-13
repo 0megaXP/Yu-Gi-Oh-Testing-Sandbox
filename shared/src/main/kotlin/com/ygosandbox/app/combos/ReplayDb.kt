@@ -75,22 +75,31 @@ data class ReplayGameInfo(
     val turns: Int,
     /** The recorded player's Main + Extra Deck (empty when the replay has none), to replay their turns later. */
     val deck: List<Long> = emptyList(),
-)
+    /** Per player: their Main + Extra Deck (empty when not in the replay). */
+    val decks: List<List<Long>> = emptyList(),
+    /** Read with both players' views (their hands and draws known), when the replay has them. */
+    val full: Boolean = false,
+    /** Version of the reading ([UniversalReplay.VERSION]); older games are read again from their file. */
+    val reader: Int = 1,
+) {
+    /** The Main + Extra Deck of [player], or empty. */
+    fun deckOf(player: Int): List<Long> = decks.getOrNull(player)?.takeIf { it.isNotEmpty() } ?: if (player == recording) deck else emptyList()
+}
 
 data class ReplayDatabase(val games: List<ReplayGameInfo>, val turns: List<ReplayTurn>, val unreadable: List<String>) {
     val ids: Set<String> get() = (games.map { it.id } + unreadable).toSet()
 
-    /** Turns the engine can replay (a first turn with the opening hand) and hasn't yet. */
+    /** Turns the engine can replay (a first turn with the opening hand and the player's deck) and hasn't yet. */
     fun pending(): List<ReplayTurn> {
-        val withDeck = games.filter { it.deck.isNotEmpty() }.map { it.id }.toSet()
-        return turns.filter { it.check == null && it.hand.size >= 5 && it.turn == 1 && it.steps.size >= 3 && it.game in withDeck }
+        val byId = games.associateBy { it.id }
+        return turns.filter { t ->
+            t.check == null && t.hand.size >= 5 && t.turn == 1 && t.steps.size >= 3 &&
+                byId[t.game]?.deckOf(t.player)?.isNotEmpty() == true
+        }
     }
 
-    /** Games whose first turn could be replayed but whose deck wasn't kept (analysed by an older version). */
-    val missingDecks: Set<String> get() {
-        val need = turns.filter { it.check == null && it.hand.size >= 5 && it.turn == 1 && it.steps.size >= 3 }.map { it.game }.toSet()
-        return games.filter { it.deck.isEmpty() && it.id in need }.map { it.id }.toSet()
-    }
+    /** Games read by an older version: read again from their file (decks, both players' hands). */
+    val outdated: Set<String> get() = games.filter { it.reader < UniversalReplay.VERSION }.map { it.id }.toSet()
 }
 
 /** Every analysed YGO Omega replay, for all decks: files/replaydb.json. */
@@ -118,7 +127,8 @@ class ReplayDbStore {
         .put("games", JSONArray(db.games.map { g ->
             JSONObject().put("id", g.id).put("savedAt", g.savedAt).put("archetypes", JSONArray(g.archetypes))
                 .put("first", g.first).put("winner", g.winner ?: JSONObject.NULL).put("recording", g.recording).put("turns", g.turns)
-                .put("deck", JSONArray(g.deck))
+                .put("deck", JSONArray(g.deck)).put("decks", JSONArray(g.decks.map { JSONArray(it) }))
+                .put("full", g.full).put("reader", g.reader)
         }))
         .put("turns", JSONArray(db.turns.map { t ->
             JSONObject().put("game", t.game).put("player", t.player).put("archetype", t.archetype).put("turn", t.turn)
@@ -140,7 +150,9 @@ class ReplayDbStore {
         unreadable = o.optJSONArray("unreadable").strings(),
         games = o.optJSONArray("games").objects().map { g ->
             ReplayGameInfo(g.optString("id"), g.optLong("savedAt"), g.optJSONArray("archetypes").strings(), g.optInt("first"),
-                g.intOrNull("winner"), g.optInt("recording"), g.optInt("turns"), g.optJSONArray("deck").longs())
+                g.intOrNull("winner"), g.optInt("recording"), g.optInt("turns"), g.optJSONArray("deck").longs(),
+                g.optJSONArray("decks")?.let { a -> (0 until a.length()).map { a.optJSONArray(it).longs() } } ?: emptyList(),
+                g.optBoolean("full"), g.optInt("reader", 1))
         },
         turns = o.optJSONArray("turns").objects().map { t ->
             ReplayTurn(
@@ -166,6 +178,9 @@ class ReplayDbStore {
 // ---------------------------------------------------------------- reading a replay, for every deck
 
 object UniversalReplay {
+    /** 2: both players' views (decks, hands, draws) when the replay has them. */
+    const val VERSION = 2
+
     /** Mulcharmy cards and Droll & Lock Bird, by name: the opponent's draw / search punishers. */
     fun punisher(name: String): String? = when {
         name.startsWith("Mulcharmy") -> "mulcharmy"
@@ -184,8 +199,9 @@ object UniversalReplay {
         val id = OmegaImport.id(bytes)
         fun c(x: Long) = cn.canonical(x)
         val arche = (0..1).map { archetype(g.seen[it], cn, handTraps) }
+        val decks = (0..1).map { g.decks.getOrNull(it)?.first.orEmpty() }
         val info = ReplayGameInfo(id, OmegaImport.savedAt(fileName, 0L), arche, g.first, g.winner, g.deckOwner, g.turns.size,
-            g.deck?.first.orEmpty())
+            g.deck?.first.orEmpty(), decks, g.fullInfo, VERSION)
         val turns = g.turns.mapIndexed { i, t ->
             val p = t.player
             val mine = t.events.filter { it.player == p }
@@ -193,7 +209,10 @@ object UniversalReplay {
             val next = g.turns.getOrNull(i + 1)?.takeIf { it.player != p }
             ReplayTurn(
                 game = id, player = p, archetype = arche[p], turn = t.number, goingFirst = p == g.first,
-                hand = if (i == 0 && p == g.deckOwner) g.openingHands[p].map(::c) else emptyList(),
+                // the first player's opening turn: their opening hand, known for the recorded player and,
+                // with both views, for the other one too
+                hand = if (i == 0 && (p == g.deckOwner || g.fullInfo) && g.openingHands[p].none { it == 0L })
+                    g.openingHands[p].map(::c) else emptyList(),
                 steps = mine.map { e -> ComboStep(null, e.action, c(e.code), cn.name(e.code), if (e.onOpponentField) "on the opponent's field" else "") },
                 endBoard = t.endField[p].map { (code, where) -> BoardCard(c(code), cn.name(code), where) },
                 plays = mine.count { it.action == "activate" },
@@ -362,16 +381,14 @@ object ReplayLearning {
                 val cn = CardNames(db)
                 val handTraps = ComboViewModel.HAND_TRAPS.mapNotNull { cn.resolve(it, emptySet()) }.map { cn.canonical(it) }.toSet()
                 var data = database()
-                val known = data.ids
-                val fresh = files.filter { (_, b) -> OmegaImport.id(b) !in known }
-                // games analysed before decks were kept: take the deck from their file again
-                val missing = data.missingDecks
-                val refill = files.mapNotNull { (_, b) ->
-                    val id = OmegaImport.id(b)
-                    if (id !in missing) null else runCatching { OmegaReplay.read(b).deck?.first }.getOrNull()?.let { id to it }
-                }.toMap()
-                val games = ArrayList(data.games.map { g -> refill[g.id]?.let { g.copy(deck = it) } ?: g })
-                val turns = ArrayList(data.turns)
+                val outdated = data.outdated
+                // new replays, and games read by an older version (read again: both players' views)
+                val fresh = files.filter { (_, b) -> OmegaImport.id(b).let { it !in data.ids || it in outdated } }
+                val again = fresh.map { (_, b) -> OmegaImport.id(b) }.filter { it in outdated }.toSet()
+                // the engine's replays already done for those games are kept
+                val oldChecks = data.turns.filter { it.game in again && it.check != null }.associateBy({ "${it.key}/${it.player}" }, { it.check })
+                val games = ArrayList(data.games.filter { it.id !in again })
+                val turns = ArrayList(data.turns.filter { it.game !in again })
                 val unreadable = ArrayList(data.unreadable)
                 fresh.forEachIndexed { i, (name, bytes) ->
                     _state.update { it.copy(progress = "Reading ${i + 1} of ${fresh.size}") }
@@ -379,23 +396,26 @@ object ReplayLearning {
                     val r = UniversalReplay.read(name, bytes, cn, handTraps)
                     if (r == null) { unreadable += OmegaImport.id(bytes); return@forEachIndexed }
                     games += r.first
-                    turns += r.second
-                    added++
+                    turns += r.second.map { t -> oldChecks["${t.key}/${t.player}"]?.let { t.copy(check = it) } ?: t }
+                    if (r.first.id !in again) added++
                     // saved as it goes: closing the app keeps what was read
                     if (added % 10 == 0) save(ReplayDatabase(games, turns, unreadable))
                 }
+                // older games whose file wasn't in this run (outside the period, deleted) stay as they
+                // were read: not asked for again
+                for (i in games.indices) if (games[i].reader < UniversalReplay.VERSION) games[i] = games[i].copy(reader = UniversalReplay.VERSION)
                 data = ReplayDatabase(games, turns, unreadable)
                 save(data)
 
                 // the engine replays every first turn it has the deck and hand for and hasn't checked
                 // yet: the new ones, and any left when the app was closed during an earlier run
-                val decks = games.filter { it.deck.isNotEmpty() }.associate { it.id to it.deck }
+                val byId = games.associateBy { it.id }
                 val todo = data.pending()
                 val policies = PolicyStore()
                 todo.forEachIndexed { i, t ->
                     _state.update { it.copy(progress = "Engine: line ${i + 1} of ${todo.size}") }
                     BackgroundWork.update("replaydb", "Engine checks line ${i + 1} of ${todo.size}", 0.3f + 0.7f * i / todo.size)
-                    val cards = decks.getValue(t.game)
+                    val cards = byId.getValue(t.game).deckOf(t.player)
                     val deck = EngineDeck(
                         name = t.archetype.ifBlank { "Replay deck" },
                         main = cards.filter { !cn.isExtraDeck(it) }, extra = cards.filter { cn.isExtraDeck(it) },

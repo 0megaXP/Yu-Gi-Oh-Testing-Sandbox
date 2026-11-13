@@ -131,7 +131,7 @@ fun CombosTab(deck: DeckAnalysis, vm: AppViewModel, cvm: ComboViewModel, openCar
             if (showDropped) items(lib!!.dropped, key = { "d" + it.url }) { d ->
                 val uri = LocalUriHandler.current
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f).clickable { runCatching { uri.openUri(d.url) } }) {
+                    Column(Modifier.weight(1f).clickable { if (d.url.startsWith("http")) runCatching { uri.openUri(d.url) } }) {
                         Text(d.title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         ComboNote(d.reason)
                     }
@@ -327,7 +327,7 @@ private fun LineCard(vm: AppViewModel, cvm: ComboViewModel, deckId: String, line
                 }
             }
             ComboLabel("Videos")
-            line.videos.forEach { src -> Source(src, onOpen = { runCatching { uri.openUri(src.url) } }, onForget = { cvm.forget(deckId, src.url) }) }
+            line.videos.forEach { src -> Source(src, onOpen = { if (src.url.startsWith("http")) runCatching { uri.openUri(src.url) } }, onForget = { cvm.forget(deckId, src.url) }) }
         }
     }
 }

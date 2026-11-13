@@ -52,6 +52,17 @@ interface Platform {
     val interruptedHint: String
         get() = "Open the app again and run it once more: it continues where it stopped."
 
+    // ---- files
+
+    /**
+     * Lets the person pick files (name to contents), starting in [startIn] where the system allows.
+     * Empty when they cancel.
+     */
+    suspend fun pickFiles(title: String, startIn: java.io.File? = null): List<Pair<String, ByteArray>> = emptyList()
+
+    /** YGO Omega's replay folder on this computer, or null (not installed, or not a computer). */
+    val omegaReplays: java.io.File? get() = null
+
     // ---- video reading (Combos and Replays tabs)
 
     /** Cutting videos into frames and reading text on them, or null where it isn't available yet. */

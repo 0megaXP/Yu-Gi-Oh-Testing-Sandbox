@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -36,6 +37,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -60,7 +63,7 @@ import java.time.LocalDate
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun ReplaysTab(deck: DeckAnalysis, vm: AppViewModel, rvm: ReplayViewModel, openCards: (List<Long>, Int) -> Unit) {
+fun ReplaysTab(deck: DeckAnalysis, vm: AppViewModel, rvm: ReplayViewModel, cvm: ComboViewModel, openCards: (List<Long>, Int) -> Unit) {
     val ui by rvm.ui.collectAsState()
     LaunchedEffect(deck.id) { rvm.library(deck.id) }
     val lib = ui.libraries[deck.id]
@@ -100,6 +103,7 @@ fun ReplaysTab(deck: DeckAnalysis, vm: AppViewModel, rvm: ReplayViewModel, openC
                     enabled = (free || hasKey) && !busyHere && !busyElsewhere)
             }
         }
+        if (ui.searchFor != deck.id) item { OmegaImportCard(deck, vm, rvm, cvm, lib?.readUrls ?: emptySet(), enabled = !busyHere && !busyElsewhere) }
         if (busyElsewhere) item { ReplayNote("Another deck's matches are being read; wait for that to finish.") }
 
         val matches = lib?.matches.orEmpty().sortedByDescending { it.date }
@@ -129,6 +133,53 @@ fun ReplaysTab(deck: DeckAnalysis, vm: AppViewModel, rvm: ReplayViewModel, openC
                     IconButton(onClick = { rvm.forget(deck.id, d.url) }) { Icon(Icons.Default.Close, "Forget, so it can be read again") }
                 }
             }
+        }
+    }
+}
+
+/**
+ * YGO Omega replay files: read exactly (every activation, summon and result is in the file),
+ * nothing to download or recognise. On Windows the app can take every new replay from Omega's folder.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun OmegaImportCard(deck: DeckAnalysis, vm: AppViewModel, rvm: ReplayViewModel, cvm: ComboViewModel, readUrls: Set<String>, enabled: Boolean) {
+    val scope = rememberCoroutineScope()
+    val platform = remember { com.ygosandbox.app.platform.AppPlatform.current }
+    val folder = remember { platform.omegaReplays }
+    var note by remember { mutableStateOf<String?>(null) }
+    fun import(files: List<Pair<String, ByteArray>>) {
+        if (files.isEmpty()) return
+        rvm.importOmega(deck, vm.db, files, cvm, vm::engine)
+    }
+    Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = MaterialTheme.shapes.medium) {
+        Column(Modifier.padding(12.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("YGO Omega replays", fontWeight = FontWeight.SemiBold)
+            ReplayNote(
+                "Read exactly from the replay file, for free. Going first, the first turn is also added to the Combos tab " +
+                    "for the engine to check." + if (folder == null) " Omega saves them in its Replays folder " +
+                    "(on Windows: %USERPROFILE%\\AppData\\LocalLow\\Duelists Unite\\YGO Omega); copy the .bytes files to this device." else ""
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (folder != null) Button(enabled = enabled, onClick = {
+                    scope.launch {
+                        val files = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            folder.walkTopDown().maxDepth(3).filter { it.isFile && it.extension.equals("bytes", true) }
+                                .map { it.name to it.readBytes() }
+                                .filter { (_, b) -> com.ygosandbox.app.combos.OmegaImport.id(b) !in readUrls }.toList()
+                        }
+                        note = if (files.isEmpty()) "No new replays in ${folder.path}." else null
+                        import(files)
+                    }
+                }) { Text("Import new from YGO Omega") }
+                OutlinedButton(enabled = enabled, onClick = {
+                    scope.launch {
+                        note = null
+                        import(platform.pickFiles("YGO Omega replays", folder))
+                    }
+                }) { Text("Pick replay files") }
+            }
+            note?.let { ReplayNote(it) }
         }
     }
 }
@@ -249,7 +300,7 @@ private fun MatchCard(vm: AppViewModel, rvm: ReplayViewModel, deckId: String, m:
                 Icon(if (open) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null)
             }
             Text(m.title, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.clickable { runCatching { uri.openUri(m.url) } })
+                modifier = Modifier.clickable { if (m.url.startsWith("http")) runCatching { uri.openUri(m.url) } })
             if (m.lessons.isNotEmpty()) {
                 ReplayLabel("Takeaways")
                 m.lessons.forEach { ReplayNote("• $it") }

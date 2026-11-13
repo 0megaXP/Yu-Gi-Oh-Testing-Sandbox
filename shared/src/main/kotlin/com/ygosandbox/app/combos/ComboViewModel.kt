@@ -83,6 +83,14 @@ class ComboViewModel : ViewModel() {
         _ui.update { it.copy(libraries = it.libraries - deckId) }
     }
 
+    /** Lines from elsewhere (YGO Omega replays) added to [deckId]'s library, replacing ones with the same url. */
+    fun add(deckId: String, lines: List<VideoCombo>) {
+        if (lines.isEmpty()) return
+        val lib = library(deckId)
+        val urls = lines.map { it.url }.toSet()
+        save(lib.copy(videos = lib.videos.filter { it.url !in urls } + lines))
+    }
+
     private fun save(lib: ComboLibrary) {
         val l = lib.copy(updatedAt = System.currentTimeMillis())
         store.save(l)

@@ -35,6 +35,8 @@ class AndroidPlatform(context: Context) : Platform {
 
     override fun onWorkStarted(first: Boolean) = AndroidWork.onWorkStarted(first)
 
+    override suspend fun pickFiles(title: String, startIn: File?): List<Pair<String, ByteArray>> = AndroidFilePicker.pick()
+
     override val interruptedHint =
         "Allow YGO Sandbox to run without battery restrictions (Android settings → Apps → YGO Sandbox → Battery) " +
             "and read it again: it continues where it stopped."

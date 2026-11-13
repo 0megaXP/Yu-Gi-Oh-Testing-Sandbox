@@ -50,6 +50,30 @@ class DesktopPlatform(private val resources: File?) : Platform {
 
     override val interruptedHint = "Open the app again and run it once more: it continues where it stopped."
 
+    /** YGO Omega keeps its replays under %USERPROFILE%\AppData\LocalLow\Duelists Unite\YGO Omega. */
+    override val omegaReplays: File?
+        get() {
+            val home = System.getenv("USERPROFILE") ?: System.getProperty("user.home") ?: return null
+            val root = File(home, "AppData/LocalLow/Duelists Unite/YGO Omega")
+            if (!root.isDirectory) return null
+            return root.listFiles()?.firstOrNull { it.isDirectory && it.name.equals("Replays", ignoreCase = true) } ?: root
+        }
+
+    override suspend fun pickFiles(title: String, startIn: File?): List<Pair<String, ByteArray>> = withContext(Dispatchers.IO) {
+        val chooser = javax.swing.JFileChooser(startIn ?: omegaReplays).apply {
+            dialogTitle = title
+            isMultiSelectionEnabled = true
+            fileSelectionMode = javax.swing.JFileChooser.FILES_ONLY
+            fileFilter = javax.swing.filechooser.FileNameExtensionFilter("YGO Omega replays (*.bytes)", "bytes")
+        }
+        var picked: Array<File> = emptyArray()
+        javax.swing.SwingUtilities.invokeAndWait {
+            if (chooser.showOpenDialog(null) == javax.swing.JFileChooser.APPROVE_OPTION)
+                picked = chooser.selectedFiles.takeIf { it.isNotEmpty() } ?: arrayOf(chooser.selectedFile)
+        }
+        picked.filter { it.isFile }.map { it.name to it.readBytes() }
+    }
+
     /** Frame decoding and text recognition aren't on the desktop yet (the phone app has them). */
     override val video: VideoPlatform? = null
 }

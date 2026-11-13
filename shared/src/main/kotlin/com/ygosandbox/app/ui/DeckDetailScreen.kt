@@ -113,7 +113,7 @@ fun DeckDetailScreen(ui: UiState, vm: AppViewModel, id: String) {
             when (tab) {
                 2 -> SourceDeckList(deck.decks, onOpen = { viewing = it })
                 3 -> CombosTab(deck, vm, combos, openCards = { codes, i -> comboCards = codes to i })
-                4 -> ReplaysTab(deck, vm, replays, openCards = { codes, i -> comboCards = codes to i })
+                4 -> ReplaysTab(deck, vm, replays, combos, openCards = { codes, i -> comboCards = codes to i })
                 else -> CardSections(shown, vm, ui.dbRevision) { index -> pagerStart = index }
             }
         }

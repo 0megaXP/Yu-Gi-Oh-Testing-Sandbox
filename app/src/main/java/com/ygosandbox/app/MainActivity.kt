@@ -30,6 +30,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         AndroidWork.install(this)
+        com.ygosandbox.app.platform.AndroidFilePicker.install(this)
         if (savedInstanceState == null && AndroidWork.needsNotificationPermission(this))
             askNotifications.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         setContent {

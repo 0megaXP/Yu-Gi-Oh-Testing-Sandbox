@@ -4,6 +4,7 @@ import com.ygosandbox.app.platform.AppPlatform
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.ygoengine.YgoEngine
 import com.ygosandbox.app.data.CardDatabase
 import com.ygosandbox.app.model.DeckAnalysis
 import kotlinx.coroutines.CancellationException
@@ -76,6 +77,48 @@ class ReplayViewModel : ViewModel() {
     fun forget(deckId: String, url: String) {
         val lib = library(deckId)
         save(lib.copy(matches = lib.matches.filter { it.url != url }, dropped = lib.dropped.filter { it.url != url }))
+    }
+
+    /**
+     * YGO Omega replay files ([name] to contents): each becomes a match here, read exactly from
+     * the file. When the archetype went first, its first turn also goes to the Combos tab and
+     * the engine checks it there.
+     */
+    fun importOmega(deck: DeckAnalysis, db: CardDatabase, files: List<Pair<String, ByteArray>>, combos: ComboViewModel, engine: suspend () -> YgoEngine) {
+        if (job?.isActive == true || files.isEmpty()) return
+        _ui.update { it.copy(runFor = deck.id, runNote = null, searchFor = null, hits = emptyList()) }
+        job = viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+            try {
+                _ui.update { it.copy(run = RunProgress(1, files.size, files.first().first, "Reading YGO Omega replays", 0f)) }
+                val cn = names ?: CardNames(db).also { names = it }
+                val allowed = allowedCards(deck, cn)
+                val handTraps = ComboViewModel.HAND_TRAPS.mapNotNull { cn.resolve(it, emptySet()) }.map { cn.canonical(it) }.toSet()
+                val results = files.mapIndexed { i, (name, bytes) ->
+                    _ui.update { it.copy(run = RunProgress(i + 1, files.size, name, "Reading YGO Omega replays", i.toFloat() / files.size)) }
+                    OmegaImport.convert(name, bytes, deck, cn, allowed, handTraps)
+                }
+                val kept = results.filterIsInstance<OmegaImport.Result.Kept>()
+                val dropped = results.filterIsInstance<OmegaImport.Result.Dropped>()
+                val lib = library(deck.id)
+                val ids = results.map { r -> if (r is OmegaImport.Result.Kept) r.match.url else (r as OmegaImport.Result.Dropped).id }.toSet()
+                save(lib.copy(
+                    matches = lib.matches.filter { it.url !in ids } + kept.map { it.match },
+                    dropped = lib.dropped.filter { it.url !in ids } + dropped.map { DroppedVideo(it.id, it.title, it.reason) },
+                ))
+                val lines = kept.mapNotNull { it.line }
+                combos.add(deck.id, lines)
+                if (lines.isNotEmpty()) combos.check(deck, db, engine)
+                _ui.update { it.copy(runNote = "${kept.size} replay${if (kept.size == 1) "" else "s"} added" +
+                    (if (dropped.isNotEmpty()) ", ${dropped.size} left out (see below)" else "") +
+                    (if (lines.isNotEmpty()) ". ${lines.size} first-turn line${if (lines.size == 1) "" else "s"} went to the Combos tab for the engine to check." else ".")) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _ui.update { it.copy(runNote = "Couldn't read the replays: ${e.message ?: e.toString()}") }
+            } finally {
+                _ui.update { it.copy(run = null) }
+            }
+        }
     }
 
     fun read(deck: DeckAnalysis, db: CardDatabase, videos: List<VideoHit>) {

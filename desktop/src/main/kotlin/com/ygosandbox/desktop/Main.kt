@@ -7,7 +7,11 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.window.LocalWindowExceptionHandlerFactory
+import androidx.compose.ui.window.WindowExceptionHandler
+import androidx.compose.ui.window.WindowExceptionHandlerFactory
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPosition
@@ -28,6 +32,7 @@ import com.ygosandbox.app.work.BackgroundWork
 import okio.Path.Companion.toOkioPath
 import java.io.File
 
+@OptIn(ExperimentalComposeUiApi::class)
 fun main() {
     // The installer puts the engine DLL and the card pack in the app's resources folder.
     val resources = System.getProperty("compose.application.resources.dir")?.let(::File)
@@ -36,6 +41,7 @@ fun main() {
 
     val platform = DesktopPlatform(resources)
     AppPlatform.current = platform
+    CrashLog.install()
     BackgroundWork.install()
 
     // Card pictures: kept on disk like on the phone, so they load instantly the second time.
@@ -51,6 +57,7 @@ fun main() {
     }
 
     val vm = AppViewModel()
+    CrashLog.context = { "Screen: ${vm.ui.value.screen}" + if (vm.ui.value.duel.active) " · duel running" else "" }
     val viewModels = object : ViewModelStoreOwner {
         override val viewModelStore = ViewModelStore()
     }
@@ -61,6 +68,11 @@ fun main() {
         ?.let { DpSize(it[0].dp, it[1].dp) } ?: DpSize(1100.dp, 880.dp)
 
     application {
+        CompositionLocalProvider(
+            LocalWindowExceptionHandlerFactory provides WindowExceptionHandlerFactory { w ->
+                WindowExceptionHandler { e -> CrashLog.fatal(e, w) }
+            },
+        ) {
         Window(
             onCloseRequest = ::exitApplication,
             title = "YGO Sandbox",
@@ -78,6 +90,7 @@ fun main() {
                     SandboxApp(vm)
                 }
             }
+        }
         }
     }
 }

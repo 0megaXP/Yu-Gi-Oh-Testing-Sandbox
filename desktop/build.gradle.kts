@@ -61,7 +61,9 @@ dependencies {
 compose.desktop {
     application {
         mainClass = "com.ygosandbox.desktop.MainKt"
-        jvmArgs += listOf("-Xmx3g")
+        // A crash of the JVM itself (native code) leaves its report next to the app instead of
+        // wherever the app was started from.
+        jvmArgs += listOf("-Xmx3g", "-XX:ErrorFile=\$APPDIR/../hs_err_pid%p.log")
 
         nativeDistributions {
             targetFormats(TargetFormat.Msi)

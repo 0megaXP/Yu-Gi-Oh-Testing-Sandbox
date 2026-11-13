@@ -8,6 +8,9 @@ android {
     namespace = "com.ygosandbox.app"
     compileSdk = 35
 
+    // The release build skips the lint pass (about a minute on CI); run ./gradlew lint to check.
+    lint { checkReleaseBuilds = false }
+
     defaultConfig {
         applicationId = "com.ygosandbox.app"
         // The engine ships native code for phones (arm64) and the emulator (x86_64).

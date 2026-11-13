@@ -48,10 +48,11 @@ class Tour(private val vm: AppViewModel, private val window: ComposeWindow, priv
                 it.copy(mode = DuelMode.BOT_VS_BOT, deck1 = "my:${decks[0].id}", deck2 = "my:${decks[1].id}", delayMs = 300)
             }
             vm.startDuel()
-            shot("10_duel_a", 25_000)
-            shot("11_duel_b", 25_000)
+            // YGO_TOUR_DUEL_SHOTS: how many board pictures, 25 s apart (longer runs catch late crashes).
+            val shots = System.getenv("YGO_TOUR_DUEL_SHOTS")?.toIntOrNull() ?: 2
+            repeat(shots) { i -> shot("10_duel_%02d".format(i + 1), 25_000) }
             vm.pauseDuel(true)
-            shot("12_duel_paused", 3000)
+            shot("11_duel_paused", 3000)
             vm.stopDuel()
         }
     }

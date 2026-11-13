@@ -217,6 +217,7 @@ private fun DuelBoardScreen(d: DuelUi, vm: AppViewModel, onOpen: (List<Long>, In
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
     val wide = maxWidth >= 1000.dp && maxHeight >= 560.dp
+    val bigWindow = maxWidth >= 1400.dp
     Column(Modifier.fillMaxSize()) {
         Header(if (s == null) "Duel" else "Turn ${s.turn} · ${s.phase}", onBack = { vm.back() }) {
             if (d.human < 0 || s?.decision?.player != d.human) {
@@ -258,7 +259,7 @@ private fun DuelBoardScreen(d: DuelUi, vm: AppViewModel, onOpen: (List<Long>, In
                     ) { board(slot, hand) }
                 }
                 // A wider side panel on a big window, so log lines wrap less.
-                Column(Modifier.width(if (maxWidth >= 1400.dp) 460.dp else 380.dp).fillMaxHeight().padding(end = 12.dp, bottom = 12.dp)) {
+                Column(Modifier.width(if (bigWindow) 460.dp else 380.dp).fillMaxHeight().padding(end = 12.dp, bottom = 12.dp)) {
                     LogPanel(d.log, d.names, colors, open = true, onToggle = {}, fill = true, modifier = Modifier.weight(1f))
                     Spacer(Modifier.height(8.dp))
                     Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, tonalElevation = 3.dp, shape = RoundedCornerShape(12.dp)) {

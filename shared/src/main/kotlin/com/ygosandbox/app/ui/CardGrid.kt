@@ -20,19 +20,34 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.staticCompositionLocalOf
 import coil3.compose.AsyncImage
 import com.ygosandbox.app.model.Card
 
-/** Number of card pictures per grid row. */
+/** Number of card pictures per grid row on the phone. */
 const val GRID_COLUMNS = 5
+
+/** Widest a list screen gets; on a bigger window it sits in the middle. */
+val MAX_CONTENT_WIDTH = 960.dp
+
+/** Card pictures per grid row for the screen's width: 5 on a phone, more on a desktop window. */
+val LocalGridColumns = staticCompositionLocalOf { GRID_COLUMNS }
+
+fun gridColumnsFor(width: Dp): Int = (width / 104.dp).toInt().coerceIn(GRID_COLUMNS, 10)
 
 /**
  * Adds a grid of card pictures to a list: one picture per copy, so a card played 3 times shows 3 times.
  * [cards] are (id, card) pairs in display order, already repeated per copy.
  */
-fun LazyListScope.cardGrid(keyPrefix: String, cards: List<Pair<Long, Card?>>, onClick: (Long) -> Unit) {
-    cards.chunked(GRID_COLUMNS).forEachIndexed { row, chunk ->
+fun LazyListScope.cardGrid(
+    keyPrefix: String,
+    cards: List<Pair<Long, Card?>>,
+    columns: Int = GRID_COLUMNS,
+    onClick: (Long) -> Unit,
+) {
+    cards.chunked(columns).forEachIndexed { row, chunk ->
         item(key = "${keyPrefix}_row$row") {
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
@@ -49,7 +64,7 @@ fun LazyListScope.cardGrid(keyPrefix: String, cards: List<Pair<Long, Card?>>, on
                     )
                 }
                 // Keep the last row's pictures the same size as the others.
-                repeat(GRID_COLUMNS - chunk.size) { Box(Modifier.weight(1f)) }
+                repeat(columns - chunk.size) { Box(Modifier.weight(1f)) }
             }
         }
     }

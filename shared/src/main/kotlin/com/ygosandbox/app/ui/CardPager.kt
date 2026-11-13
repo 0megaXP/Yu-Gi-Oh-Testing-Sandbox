@@ -4,6 +4,8 @@ import com.ygosandbox.app.platform.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -95,60 +97,89 @@ fun CardPager(
 
 @Composable
 private fun CardPage(item: PagerItem, format: GameFormat, onPrev: (() -> Unit)?, onNext: (() -> Unit)?) {
-    val c = item.card
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            ArrowButton(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Previous card", onPrev)
-            AsyncImage(
-                model = c?.imageUrl() ?: "https://images.ygoprodeck.com/images/cards/${item.cardId}.jpg",
-                contentDescription = item.name,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.weight(1f).aspectRatio(0.686f).clip(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-            )
-            ArrowButton(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Next card", onNext)
-        }
-        Text(item.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-
-        item.stat?.let { s -> StatBlock(s) }
-
-        if (c == null) {
-            Text(
-                "This card isn't in the downloaded database yet. Update the card database in Settings.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            return@Column
-        }
-
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.width(6.dp).height(18.dp).background(frameColor(c.frameType), RoundedCornerShape(2.dp)))
-            Spacer(Modifier.width(8.dp))
-            Text(typeLine(c), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-        }
-        if (c.isMonster) {
-            val parts = buildList {
-                if (c.attribute.isNotEmpty()) add(c.attribute)
-                c.level?.let { add((if (c.isLink) "Link " else if (c.isXyz) "Rank " else "Level ") + it) }
-                c.scale?.let { add("Scale $it") }
-                add("ATK ${c.atk?.toString() ?: "?"}")
-                if (!c.isLink) add("DEF ${c.def?.toString() ?: "?"}")
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        if (maxWidth >= 720.dp) {
+            // Wide window: the picture on the left at a size that fits the height, the text beside it.
+            val image = minOf(maxWidth * 0.4f, (maxHeight - 90.dp) * 0.686f, 400.dp)
+            Row(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    CardImage(item, Modifier.width(image))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        ArrowButton(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Previous card", onPrev)
+                        ArrowButton(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Next card", onNext)
+                    }
+                }
+                Column(
+                    Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) { CardDetails(item, format) }
             }
-            Text(parts.joinToString(" · "), style = MaterialTheme.typography.bodyMedium)
+        } else {
+            Column(
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    ArrowButton(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Previous card", onPrev)
+                    CardImage(item, Modifier.weight(1f))
+                    ArrowButton(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Next card", onNext)
+                }
+                CardDetails(item, format)
+            }
         }
-        val ban = if (format == GameFormat.TCG) c.banTcg else c.banOcg
-        val labels = buildList {
-            if (c.archetype.isNotEmpty()) add("Archetype: ${c.archetype}")
-            add("${format.label}: ${ban.ifEmpty { "Unlimited" }}")
-        }
-        Text(labels.joinToString("   "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = RoundedCornerShape(12.dp)) {
-            Text(c.desc, Modifier.padding(14.dp), style = MaterialTheme.typography.bodyMedium)
-        }
-        Spacer(Modifier.height(24.dp))
     }
+}
+
+@Composable
+private fun CardImage(item: PagerItem, modifier: Modifier) {
+    AsyncImage(
+        model = item.card?.imageUrl() ?: "https://images.ygoprodeck.com/images/cards/${item.cardId}.jpg",
+        contentDescription = item.name,
+        contentScale = ContentScale.Fit,
+        modifier = modifier.aspectRatio(0.686f).clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+    )
+}
+
+@Composable
+private fun CardDetails(item: PagerItem, format: GameFormat) {
+    val c = item.card
+    Text(item.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+
+    item.stat?.let { s -> StatBlock(s) }
+
+    if (c == null) {
+        Text(
+            "This card isn't in the downloaded database yet. Update the card database in Settings.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.width(6.dp).height(18.dp).background(frameColor(c.frameType), RoundedCornerShape(2.dp)))
+        Spacer(Modifier.width(8.dp))
+        Text(typeLine(c), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+    }
+    if (c.isMonster) {
+        val parts = buildList {
+            if (c.attribute.isNotEmpty()) add(c.attribute)
+            c.level?.let { add((if (c.isLink) "Link " else if (c.isXyz) "Rank " else "Level ") + it) }
+            c.scale?.let { add("Scale $it") }
+            add("ATK ${c.atk?.toString() ?: "?"}")
+            if (!c.isLink) add("DEF ${c.def?.toString() ?: "?"}")
+        }
+        Text(parts.joinToString(" · "), style = MaterialTheme.typography.bodyMedium)
+    }
+    val ban = if (format == GameFormat.TCG) c.banTcg else c.banOcg
+    val labels = buildList {
+        if (c.archetype.isNotEmpty()) add("Archetype: ${c.archetype}")
+        add("${format.label}: ${ban.ifEmpty { "Unlimited" }}")
+    }
+    Text(labels.joinToString("   "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = RoundedCornerShape(12.dp)) {
+        Text(c.desc, Modifier.padding(14.dp), style = MaterialTheme.typography.bodyMedium)
+    }
+    Spacer(Modifier.height(24.dp))
 }
 
 @Composable

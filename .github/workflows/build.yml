@@ -2,6 +2,8 @@ name: Build APK and Windows app
 
 on:
   push:
+    # diag: one-off checks; screens: desktop screenshots (desktop-screens.yml).
+    branches-ignore: [diag, screens]
   workflow_dispatch:
 
 permissions:

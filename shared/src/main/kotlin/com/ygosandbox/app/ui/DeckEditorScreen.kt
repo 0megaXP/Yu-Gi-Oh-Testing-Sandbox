@@ -102,6 +102,7 @@ fun DeckEditorScreen(ui: UiState, vm: AppViewModel, id: String) {
                 IconButton(onClick = { renaming = true }) { Icon(Icons.Default.Edit, "Rename") }
                 IconButton(onClick = { deleting = true }) { Icon(Icons.Default.Delete, "Delete") }
             }
+            val gridColumns = LocalGridColumns.current
             LazyColumn(contentPadding = PaddingValues(bottom = 96.dp)) {
                 item(key = "top") {
                     Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -158,7 +159,7 @@ fun DeckEditorScreen(ui: UiState, vm: AppViewModel, id: String) {
                         )
                     }
                     if (ui.deckGrid) {
-                        cardGrid("grid_${part.name}", list.flatMap { e -> List(e.copies) { e.cardId to e.card } }) { showCard(it) }
+                        cardGrid("grid_${part.name}", list.flatMap { e -> List(e.copies) { e.cardId to e.card } }, gridColumns) { showCard(it) }
                         return@forEach
                     }
                     list.groupBy { it.card?.group ?: CardGroup.UNKNOWN }.forEach { (group, rows) ->

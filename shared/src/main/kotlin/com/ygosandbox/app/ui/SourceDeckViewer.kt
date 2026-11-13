@@ -80,6 +80,7 @@ fun SourceDeckViewer(d: SourceDeck, format: GameFormat, vm: AppViewModel, dbRevi
                 Text(d.name, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                 GridToggle(grid, vm::setDeckGrid)
             }
+            val gridColumns = LocalGridColumns.current
             LazyColumn(contentPadding = PaddingValues(bottom = 32.dp)) {
                 item(key = "info") {
                     Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -127,7 +128,7 @@ fun SourceDeckViewer(d: SourceDeck, format: GameFormat, vm: AppViewModel, dbRevi
                         )
                     }
                     if (grid) {
-                        cardGrid("grid_$label", entries.flatMap { e -> List(e.copies) { e.id to e.card } }) { id ->
+                        cardGrid("grid_$label", entries.flatMap { e -> List(e.copies) { e.id to e.card } }, gridColumns) { id ->
                             pager = pagerItems.indexOfFirst { it.cardId == id }.coerceAtLeast(0)
                         }
                         return@forEach

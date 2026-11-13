@@ -8,3 +8,4 @@ captures/
 .kotlin/
 desktop/resources/windows/*.dll
 desktop/resources/common/ygoe/
+desktop/resources/linux/*.so

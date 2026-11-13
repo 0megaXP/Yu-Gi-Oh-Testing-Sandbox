@@ -4,7 +4,10 @@ import com.ygosandbox.app.platform.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -38,6 +41,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -71,7 +75,13 @@ fun SandboxApp(vm: AppViewModel) {
                 UpdateBanner(info.version, ui.updateProgress, onUpdate = { vm.installUpdate() })
             }
             if (ui.dbStatus == DbStatus.DOWNLOADING) DbBanner(ui.dbProgress)
-            Box(Modifier.weight(1f)) {
+            // On a wide window (the desktop app) list screens keep a readable width, centred, so
+            // their header icons stay next to the content; the duel board and combo trees use it all.
+            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+                val full = ui.screen == Screen.Duel || ui.screen == Screen.ComboTree
+                val width = if (full) maxWidth else minOf(maxWidth, MAX_CONTENT_WIDTH)
+                CompositionLocalProvider(LocalGridColumns provides gridColumnsFor(width)) {
+                Box(Modifier.width(width).fillMaxHeight()) {
                 when (val s = ui.screen) {
                     Screen.Menu -> MainMenu(ui, vm)
                     Screen.Decks -> DecksScreen(ui, vm)
@@ -88,6 +98,8 @@ fun SandboxApp(vm: AppViewModel) {
                     is Screen.Reference -> ReferenceScreen(ui, vm, s.deckKey)
                     Screen.ComboTree -> ComboTreeScreen(ui, vm)
                     Screen.Settings -> SettingsScreen(ui, vm)
+                }
+                }
                 }
             }
         }
@@ -129,35 +141,55 @@ private fun MainMenu(ui: UiState, vm: AppViewModel) {
         )
         DbStatusLine(ui, vm)
         Spacer(Modifier.height(4.dp))
-        MenuTile(
-            Icons.Default.Layers, "My decks",
-            if (ui.myDecks.isEmpty()) "Build, edit and save your own decks"
-            else "${ui.myDecks.size} deck${if (ui.myDecks.size == 1) "" else "s"}",
-        ) { vm.open(Screen.MyDecks) }
-        MenuTile(
-            Icons.Default.ViewCarousel, "Archetype search",
-            if (ui.decks.isEmpty()) "See what tournament decks play with any archetype"
-            else "${ui.decks.size} saved · search a new archetype",
-        ) { vm.open(Screen.Decks) }
-        MenuTile(
-            Icons.Default.Insights, "Analysis",
-            "Card roles and opening-hand odds for your decks",
-            badge = { TestBadge() },
-        ) { vm.open(Screen.Analysis) }
-        MenuTile(
-            Icons.Default.Psychology, "Play engine",
-            "Best plays and end boards for a hand, against a real deck",
-            badge = { TestBadge() },
-        ) { vm.open(Screen.Play) }
-        MenuTile(
-            Icons.Default.SportsEsports, "Duel simulator",
-            "Play against the bot, or watch two bots duel",
-            badge = { TestBadge() },
-        ) { vm.open(Screen.Duel) }
-        MenuTile(
-            Icons.Default.Style, "Card database",
-            if (ui.cardCount > 0) "Browse ${ui.cardCount} cards and archetypes" else "Available once downloaded",
-        ) { vm.open(Screen.Cards) }
+        val tiles: List<@Composable (Modifier) -> Unit> = listOf(
+            { m -> MenuTile(
+                Icons.Default.Layers, "My decks",
+                if (ui.myDecks.isEmpty()) "Build, edit and save your own decks"
+                else "${ui.myDecks.size} deck${if (ui.myDecks.size == 1) "" else "s"}",
+                modifier = m,
+            ) { vm.open(Screen.MyDecks) } },
+            { m -> MenuTile(
+                Icons.Default.ViewCarousel, "Archetype search",
+                if (ui.decks.isEmpty()) "See what tournament decks play with any archetype"
+                else "${ui.decks.size} saved · search a new archetype",
+                modifier = m,
+            ) { vm.open(Screen.Decks) } },
+            { m -> MenuTile(
+                Icons.Default.Insights, "Analysis",
+                "Card roles and opening-hand odds for your decks",
+                badge = { TestBadge() },
+                modifier = m,
+            ) { vm.open(Screen.Analysis) } },
+            { m -> MenuTile(
+                Icons.Default.Psychology, "Play engine",
+                "Best plays and end boards for a hand, against a real deck",
+                badge = { TestBadge() },
+                modifier = m,
+            ) { vm.open(Screen.Play) } },
+            { m -> MenuTile(
+                Icons.Default.SportsEsports, "Duel simulator",
+                "Play against the bot, or watch two bots duel",
+                badge = { TestBadge() },
+                modifier = m,
+            ) { vm.open(Screen.Duel) } },
+            { m -> MenuTile(
+                Icons.Default.Style, "Card database",
+                if (ui.cardCount > 0) "Browse ${ui.cardCount} cards and archetypes" else "Available once downloaded",
+                modifier = m,
+            ) { vm.open(Screen.Cards) } },
+        )
+        // Two columns of tiles on a wide window, one on the phone.
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val perRow = if (maxWidth >= 640.dp) 2 else 1
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                tiles.chunked(perRow).forEach { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.height(IntrinsicSize.Min)) {
+                        row.forEach { it(Modifier.weight(1f).fillMaxHeight()) }
+                        repeat(perRow - row.size) { Spacer(Modifier.weight(1f)) }
+                    }
+                }
+            }
+        }
         Spacer(Modifier.height(8.dp))
         Text(
             "Version ${com.ygosandbox.app.platform.AppPlatform.current.versionName}",
@@ -199,12 +231,13 @@ private fun MenuTile(
     title: String,
     subtitle: String,
     badge: (@Composable () -> Unit)? = null,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = modifier.fillMaxWidth().clickable(onClick = onClick),
     ) {
         Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
             Surface(

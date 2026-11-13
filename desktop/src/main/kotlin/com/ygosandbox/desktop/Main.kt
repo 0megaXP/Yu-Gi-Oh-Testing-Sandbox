@@ -1,6 +1,7 @@
 package com.ygosandbox.desktop
 
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -9,6 +10,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import androidx.lifecycle.ViewModelStore
@@ -29,7 +31,7 @@ import java.io.File
 fun main() {
     // The installer puts the engine DLL and the card pack in the app's resources folder.
     val resources = System.getProperty("compose.application.resources.dir")?.let(::File)
-    resources?.let { File(it, "ygoe_jni.dll") }?.takeIf { it.exists() }
+    resources?.let { File(it, System.mapLibraryName("ygoe_jni")) }?.takeIf { it.exists() }
         ?.let { System.setProperty("ygoe.library", it.absolutePath) }
 
     val platform = DesktopPlatform(resources)
@@ -53,13 +55,24 @@ fun main() {
         override val viewModelStore = ViewModelStore()
     }
 
+    // Screenshot tour (CI only): YGO_TOUR=<folder>, YGO_TOUR_SIZE=<w>x<h>.
+    val tour = System.getenv("YGO_TOUR")?.let(::File)
+    val size = System.getenv("YGO_TOUR_SIZE")?.split('x')?.mapNotNull { it.toIntOrNull() }?.takeIf { it.size == 2 }
+        ?.let { DpSize(it[0].dp, it[1].dp) } ?: DpSize(1100.dp, 880.dp)
+
     application {
         Window(
             onCloseRequest = ::exitApplication,
             title = "YGO Sandbox",
-            state = rememberWindowState(size = DpSize(1100.dp, 880.dp)),
+            state = rememberWindowState(
+                size = size,
+                position = if (tour != null) WindowPosition(0.dp, 0.dp) else WindowPosition.PlatformDefault,
+            ),
             onKeyEvent = { e -> e.type == KeyEventType.KeyDown && e.key == Key.Escape && DesktopBack.dispatch() },
         ) {
+            // Smaller than this and the board and lists stop fitting.
+            LaunchedEffect(Unit) { window.minimumSize = java.awt.Dimension(720, 600) }
+            if (tour != null) LaunchedEffect(Unit) { Tour(vm, window, tour).run(); exitApplication() }
             CompositionLocalProvider(LocalViewModelStoreOwner provides remember { viewModels }) {
                 SandboxTheme {
                     SandboxApp(vm)

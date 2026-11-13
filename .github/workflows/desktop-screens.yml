@@ -1,0 +1,55 @@
+name: Desktop screenshots
+
+# Runs the desktop app on Linux under a virtual screen, walks through the main screens at two
+# window sizes and keeps a screenshot of each, to check the layout on a desktop window.
+on:
+  push:
+    branches: [screens]
+  workflow_dispatch:
+
+jobs:
+  screens:
+    runs-on: ubuntu-latest
+    env:
+      YGO_DESKTOP_ONLY: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch the engine submodule
+        env:
+          ENGINE_TOKEN: ${{ secrets.ENGINE_TOKEN }}
+        run: |
+          git -c "url.https://x-access-token:${ENGINE_TOKEN}@github.com/.insteadOf=https://github.com/" \
+            submodule update --init --depth 1 engine
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Build the engine for Linux
+        run: |
+          cd engine
+          tools/bootstrap.sh
+          python3 tools/make_pack.py third_party/CardScripts data ../desktop/resources/common/ygoe
+          cmake -S . -B build-linux -DCMAKE_BUILD_TYPE=Release -DYGOE_BUILD_JNI=ON -DYGOE_BUILD_CLI=OFF
+          cmake --build build-linux -j"$(nproc)" --target ygoe_jni
+          mkdir -p ../desktop/resources/linux
+          cp build-linux/libygoe_jni.so ../desktop/resources/linux/
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Take the screenshots
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q xvfb
+          export SKIKO_RENDER_API=SOFTWARE
+          for size in 1100x880 1536x864; do
+            YGO_TOUR="$PWD/screens/$size" YGO_TOUR_SIZE=$size YGO_TOUR_DECKS="$PWD/engine/decks" \
+              timeout 1200 xvfb-run -a -s "-screen 0 1920x1080x24" ./gradlew :desktop:run --no-daemon || true
+          done
+          ls -R screens
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screens
+          path: screens/

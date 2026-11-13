@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -214,7 +215,8 @@ private fun DuelBoardScreen(d: DuelUi, vm: AppViewModel, onOpen: (List<Long>, In
     // Places with a card still flying in: they keep their old look until it lands.
     val pending = remember(d.moveBatch) { Pending.of(d.moves) }
 
-    Box(Modifier.fillMaxSize()) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+    val wide = maxWidth >= 1000.dp && maxHeight >= 560.dp
     Column(Modifier.fillMaxSize()) {
         Header(if (s == null) "Duel" else "Turn ${s.turn} · ${s.phase}", onBack = { vm.back() }) {
             if (d.human < 0 || s?.decision?.player != d.human) {
@@ -234,29 +236,44 @@ private fun DuelBoardScreen(d: DuelUi, vm: AppViewModel, onOpen: (List<Long>, In
             return@Column
         }
 
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 8.dp)) {
+        val board: @Composable (slot: Dp, hand: Int) -> Unit = { slot, hand ->
             PlayerBar(d.names[top], s.players[top], colors.of(top), active = s.turnPlayer == top)
-            HandRow(vm, s.players[top].hand, top, spots, pending, faceUp = reveal, onOpen)
+            HandRow(vm, s.players[top].hand, top, spots, pending, faceUp = reveal, onOpen, hand)
             Spacer(Modifier.height(4.dp))
-            Mat(vm, s, d.bottom, spots, pending, reveal, onOpen, onPile = { t, l -> pile = t to l }, names = d.names)
+            Mat(vm, s, d.bottom, spots, pending, reveal, onOpen, onPile = { t, l -> pile = t to l }, names = d.names, maxSlot = slot)
             Spacer(Modifier.height(4.dp))
-            HandRow(vm, s.players[d.bottom].hand, d.bottom, spots, pending, faceUp = d.human >= 0 || reveal, onOpen)
+            HandRow(vm, s.players[d.bottom].hand, d.bottom, spots, pending, faceUp = d.human >= 0 || reveal, onOpen, hand)
             PlayerBar(d.names[d.bottom], s.players[d.bottom], colors.of(d.bottom), active = s.turnPlayer == d.bottom)
-            LogPanel(d.log, d.names, colors, showLog) { showLog = !showLog }
-            Spacer(Modifier.height(8.dp))
         }
-
-        // Bottom panel: game over, the person's decision, or what the bot is doing.
-        Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, tonalElevation = 3.dp) {
-            Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                val decision = s.decision
-                when {
-                    s.ended -> GameOver(d, s, vm)
-                    decision != null && decision.player == d.human -> DecisionPanel(vm, decision) { vm.chooseDuelOption(it) }
-                    decision != null -> BotStatus(d, decision.player, vm)
-                    else -> Text("…")
+        if (wide) {
+            // Desktop window: the mat as big as the height allows on the left; log and choices on the right.
+            Row(Modifier.weight(1f).fillMaxWidth()) {
+                BoxWithConstraints(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.TopCenter) {
+                    // 5 mat rows (slot / 0.73 each) + 2 hands (0.8 slot wide cards) + bars and gaps.
+                    val slot = minOf((maxHeight - 132.dp) / 9.2f, (maxWidth - 32.dp - MAT_GAP * 6) / 7).coerceIn(48.dp, 104.dp)
+                    val hand = (slot.value * 0.8f).toInt().coerceAtLeast(42)
+                    Column(
+                        Modifier.width(slot * 7 + MAT_GAP * 6 + 16.dp).fillMaxHeight().verticalScroll(rememberScrollState())
+                            .padding(horizontal = 8.dp),
+                    ) { board(slot, hand) }
+                }
+                Column(Modifier.width(380.dp).fillMaxHeight().padding(end = 12.dp, bottom = 12.dp)) {
+                    LogPanel(d.log, d.names, colors, open = true, onToggle = {}, fill = true, modifier = Modifier.weight(1f))
+                    Spacer(Modifier.height(8.dp))
+                    Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, tonalElevation = 3.dp, shape = RoundedCornerShape(12.dp)) {
+                        BottomPanel(d, s, vm)
+                    }
                 }
             }
+        } else {
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 8.dp)) {
+                board(58.dp, 42)
+                LogPanel(d.log, d.names, colors, showLog) { showLog = !showLog }
+                Spacer(Modifier.height(8.dp))
+            }
+
+            // Bottom panel: game over, the person's decision, or what the bot is doing.
+            Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, tonalElevation = 3.dp) { BottomPanel(d, s, vm) }
         }
     }
     // Cards flying between zones, drawn above the board.
@@ -287,6 +304,22 @@ private fun DuelBoardScreen(d: DuelUi, vm: AppViewModel, onOpen: (List<Long>, In
     }
 }
 
+/** Game over, the person's decision, or what the bot is doing. */
+@Composable
+private fun BottomPanel(d: DuelUi, s: DuelState, vm: AppViewModel) {
+    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        val decision = s.decision
+        when {
+            s.ended -> GameOver(d, s, vm)
+            decision != null && decision.player == d.human -> DecisionPanel(vm, decision) { vm.chooseDuelOption(it) }
+            decision != null -> BotStatus(d, decision.player, vm)
+            else -> Text("…")
+        }
+    }
+}
+
+private val MAT_GAP = 3.dp
+
 @Composable
 private fun PlayerBar(name: String, p: PlayerState, color: Color, active: Boolean) {
     Row(
@@ -315,9 +348,10 @@ private fun HandRow(
     pending: Pending,
     faceUp: Boolean,
     onOpen: (List<Long>, Int) -> Unit,
+    cardWidth: Int = 42,
 ) {
     LazyRow(
-        modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp).then(spots.at("hand/$player")),
+        modifier = Modifier.fillMaxWidth().heightIn(min = (cardWidth / 0.686f + 4).dp).then(spots.at("hand/$player")),
         horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
         contentPadding = PaddingValues(vertical = 2.dp),
     ) {
@@ -325,8 +359,8 @@ private fun HandRow(
             val key = "hc/$player/$i"
             // A card still flying into the hand keeps its space but isn't drawn yet.
             Box(spots.at(key).graphicsLayer { alpha = if (pending.has(key)) 0f else 1f }) {
-                if (faceUp) CardThumbnail(vm, c.code, width = 42) { onOpen(hand.map { it.code }, i) }
-                else CardBack(42.dp)
+                if (faceUp) CardThumbnail(vm, c.code, width = cardWidth) { onOpen(hand.map { it.code }, i) }
+                else CardBack(cardWidth.dp)
             }
         }
     }
@@ -357,11 +391,12 @@ private fun Mat(
     onOpen: (List<Long>, Int) -> Unit,
     onPile: (String, List<DuelCard>) -> Unit,
     names: List<String>,
+    maxSlot: Dp = 58.dp,
 ) {
     val top = 1 - bottom
     BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val gap = 3.dp
-        val slot = ((maxWidth - gap * 6) / 7).coerceAtMost(58.dp)
+        val gap = MAT_GAP
+        val slot = ((maxWidth - gap * 6) / 7).coerceAtMost(maxSlot)
         spots.slotWidth = slot
         val ctx = MatCtx(vm, s, spots, pending, reveal, slot, onOpen, onPile, names)
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(gap), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -473,7 +508,7 @@ private class MatCtx(
             contentAlignment = Alignment.Center,
         ) {
             when {
-                count == 0 -> SlotLabel(kind.label)
+                count == 0 -> SlotLabel(kind.label, slot)
                 topCard != null -> AsyncImage(
                     model = vm.db.find(topCard.code)?.imageUrl(small = true)
                         ?: "https://images.ygoprodeck.com/images/cards_small/${topCard.code}.jpg",
@@ -485,7 +520,7 @@ private class MatCtx(
             }
             if (count > 0) Text(
                 "$count",
-                fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                fontSize = labelSize(slot, 10f), fontWeight = FontWeight.Bold, color = Color.White,
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 2.dp)
                     .background(Color(0xCC000000), RoundedCornerShape(3.dp)).padding(horizontal = 4.dp),
             )
@@ -493,10 +528,13 @@ private class MatCtx(
     }
 }
 
+/** Text on a mat slot grows with the slot: [phone] sp at the phone's 58 dp, up to 1.6× on a desktop. */
+private fun labelSize(slot: Dp, phone: Float) = (phone * (slot.value / 58f).coerceIn(1f, 1.6f)).sp
+
 @Composable
-private fun SlotLabel(text: String) {
+private fun SlotLabel(text: String, slot: Dp) {
     Text(
-        text, fontSize = 8.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+        text, fontSize = labelSize(slot, 8f), color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
         textAlign = TextAlign.Center, maxLines = 1,
     )
 }
@@ -517,7 +555,7 @@ private fun ZoneSlot(
         contentAlignment = Alignment.Center,
     ) {
         if (c == null) {
-            if (label != null) SlotLabel(label)
+            if (label != null) SlotLabel(label, slot)
             return@Box
         }
         val defense = c.isMonster && c.position != "atk"
@@ -539,7 +577,7 @@ private fun ZoneSlot(
         if (c.isMonster && !c.faceDown) {
             Text(
                 (if (defense) "${c.def}" else "${c.atk}") + if (c.materials > 0) " ·${c.materials}" else "",
-                fontSize = 9.sp, fontWeight = FontWeight.Bold,
+                fontSize = labelSize(slot, 9f), fontWeight = FontWeight.Bold,
                 color = if (defense) Color(0xFF90CAF9) else Color.White, textAlign = TextAlign.Center,
                 modifier = Modifier.align(Alignment.BottomCenter).background(Color(0xAA000000), RoundedCornerShape(2.dp))
                     .padding(horizontal = 2.dp),
@@ -549,15 +587,24 @@ private fun ZoneSlot(
 }
 
 @Composable
-private fun LogPanel(log: List<LogEntry>, names: List<String>, colors: PlayerColors, open: Boolean, onToggle: () -> Unit) {
+private fun LogPanel(
+    log: List<LogEntry>,
+    names: List<String>,
+    colors: PlayerColors,
+    open: Boolean,
+    onToggle: () -> Unit,
+    /** Desktop side panel: the whole log, filling the panel's height. */
+    fill: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(10.dp),
-        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+        modifier = modifier.fillMaxWidth().padding(top = 6.dp),
     ) {
-        Column(Modifier.padding(10.dp)) {
-            Row(Modifier.fillMaxWidth().clickable(onClick = onToggle), verticalAlignment = Alignment.CenterVertically) {
+        Column(if (fill) Modifier.fillMaxSize().padding(10.dp) else Modifier.padding(10.dp)) {
+            Row(Modifier.fillMaxWidth().clickable(enabled = !fill, onClick = onToggle), verticalAlignment = Alignment.CenterVertically) {
                 Text("Duel log", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                Text(if (open) "Show less" else "Show all", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
+                if (!fill) Text(if (open) "Show less" else "Show all", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
             }
             // Which colour is which player.
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(vertical = 4.dp)) {
@@ -573,7 +620,7 @@ private fun LogPanel(log: List<LogEntry>, names: List<String>, colors: PlayerCol
             if (open) {
                 val state = rememberLazyListState()
                 LaunchedEffect(log.size) { if (log.isNotEmpty()) state.scrollToItem(log.size - 1) }
-                LazyColumn(Modifier.heightIn(max = 320.dp), state = state) {
+                LazyColumn(if (fill) Modifier.weight(1f) else Modifier.heightIn(max = 320.dp), state = state) {
                     items(lines) { LogLine(it, colors) }
                 }
             } else {

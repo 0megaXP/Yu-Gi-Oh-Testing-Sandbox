@@ -150,7 +150,7 @@ class CardDatabase() {
                 list.forEach { writeCompact(w, it) }
                 w.endArray()
             }
-            tmp.renameTo(file)
+            com.ygosandbox.app.platform.replaceFile(tmp, file)
 
             val names = try {
                 val a = JSONArray(Http.get("$API/archetypes.php"))

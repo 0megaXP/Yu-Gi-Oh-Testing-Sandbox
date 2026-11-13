@@ -95,7 +95,7 @@ class ReplayStore() {
         val f = file(lib.deckId)
         val tmp = File(dir, f.name + ".tmp")
         tmp.writeText(encode(lib).toString())
-        tmp.renameTo(f)
+        com.ygosandbox.app.platform.replaceFile(tmp, f)
     }
 
     private fun JSONArray?.strings() = this?.let { a -> (0 until a.length()).map { a.optString(it) } } ?: emptyList()

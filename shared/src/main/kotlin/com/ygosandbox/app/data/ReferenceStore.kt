@@ -29,7 +29,7 @@ class ReferenceStore() {
     fun save(signature: String, result: ReferenceResult) {
         val tmp = File(dir, "$signature.json.tmp")
         tmp.writeText(result.json)
-        tmp.renameTo(File(dir, "$signature.json"))
+        com.ygosandbox.app.platform.replaceFile(tmp, File(dir, "$signature.json"))
         cache[signature] = result
     }
 

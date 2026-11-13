@@ -31,7 +31,7 @@ class DeckStore() {
         list.forEach { a.put(toJson(it)) }
         val tmp = File(file.parentFile, "decks.json.tmp")
         tmp.writeText(a.toString())
-        tmp.renameTo(file)
+        com.ygosandbox.app.platform.replaceFile(tmp, file)
     }
 
     private fun toJson(d: DeckAnalysis) = JSONObject().apply {

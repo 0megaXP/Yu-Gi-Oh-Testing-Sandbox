@@ -113,7 +113,7 @@ class ReplayDbStore {
         f.parentFile?.mkdirs()
         val tmp = File(f.parentFile, f.name + ".tmp")
         tmp.writeText(encode(db).toString())
-        tmp.renameTo(f)
+        com.ygosandbox.app.platform.replaceFile(tmp, f)
     }
 
     private fun JSONArray?.objects() = this?.let { a -> (0 until a.length()).map { a.getJSONObject(it) } } ?: emptyList()

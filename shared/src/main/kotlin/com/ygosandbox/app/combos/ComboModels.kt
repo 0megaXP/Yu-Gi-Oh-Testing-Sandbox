@@ -274,7 +274,7 @@ class ComboStore() {
         val f = file(lib.deckId)
         val tmp = File(dir, f.name + ".tmp")
         tmp.writeText(encode(lib).toString())
-        tmp.renameTo(f)
+        com.ygosandbox.app.platform.replaceFile(tmp, f)
     }
 
     fun delete(deckId: String) { file(deckId).delete() }

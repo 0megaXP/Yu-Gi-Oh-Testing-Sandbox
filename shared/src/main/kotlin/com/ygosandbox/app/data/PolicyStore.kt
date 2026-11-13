@@ -22,7 +22,7 @@ class PolicyStore() {
         if (json.isNullOrBlank()) return
         val tmp = File(file.parentFile, "policy.json.tmp")
         tmp.writeText(json)
-        tmp.renameTo(file)
+        com.ygosandbox.app.platform.replaceFile(tmp, file)
     }
 
     /** How many decisions it has learned from (0 when nothing yet). */

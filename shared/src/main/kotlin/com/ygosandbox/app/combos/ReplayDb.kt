@@ -1,6 +1,8 @@
 package com.ygosandbox.app.combos
 
 import com.ygoengine.DeckKnowledge
+import com.ygoengine.Imitation
+import com.ygoengine.LineChoice
 import com.ygoengine.EngineDeck
 import com.ygoengine.VideoLineInput
 import com.ygoengine.VideoStepInput
@@ -46,6 +48,10 @@ data class ReplayTurn(
     val lostNextTurn: Boolean,
     /** The engine's replay of the line (first turns of the recorded player), null until checked. */
     val check: LineCheck? = null,
+    /** Why the line made its choices: each compared by the engine with the other options. */
+    val choices: List<LineChoice> = emptyList(),
+    /** The engine has looked at its choices (done with the replay of the line). */
+    val explained: Boolean = false,
 ) {
     val key: String get() = "$game#$turn"
 
@@ -93,8 +99,9 @@ data class ReplayDatabase(val games: List<ReplayGameInfo>, val turns: List<Repla
     fun pending(): List<ReplayTurn> {
         val byId = games.associateBy { it.id }
         return turns.filter { t ->
-            t.check == null && t.hand.size >= 5 && t.turn == 1 && t.steps.size >= 3 &&
-                byId[t.game]?.deckOf(t.player)?.isNotEmpty() == true
+            // not replayed yet, or replayed (at least its start) before the engine explained choices
+            (t.check == null || (!t.explained && (t.check.verified || t.check.verifiedSteps > 0))) &&
+                t.hand.size >= 5 && t.turn == 1 && t.steps.size >= 3 && byId[t.game]?.deckOf(t.player)?.isNotEmpty() == true
         }
     }
 
@@ -144,6 +151,14 @@ class ReplayDbStore {
                         .put("boardMatch", c.boardMatch).put("problem", c.problem).put("library", c.library ?: JSONObject.NULL)
                         .put("verifiedSteps", c.verifiedSteps)
                 } ?: JSONObject.NULL)
+                .put("explained", t.explained)
+                .put("choices", JSONArray(t.choices.map { c ->
+                    JSONObject().put("step", c.step).put("action", c.action).put("actionCode", c.actionCode).put("chosen", c.chosen)
+                        .put("chosenCode", c.chosenCode).put("margin", c.margin).put("understood", c.understood).put("why", c.why)
+                        .put("options", JSONArray(c.options.map { o ->
+                            JSONObject().put("label", o.label).put("code", o.code).put("value", o.value).put("chosen", o.chosen)
+                        }))
+                }))
         }))
 
     private fun decode(o: JSONObject) = ReplayDatabase(
@@ -169,6 +184,14 @@ class ReplayDbStore {
                 check = t.optJSONObject("check")?.let { c ->
                     LineCheck(c.optBoolean("verified"), c.optInt("stepsMatched"), c.optInt("stepsChecked"), c.optDouble("boardMatch", 0.0),
                         c.optString("problem"), if (c.isNull("library")) null else c.optString("library"), c.optInt("verifiedSteps"))
+                },
+                explained = t.optBoolean("explained"),
+                choices = t.optJSONArray("choices").objects().map { c ->
+                    LineChoice(c.optInt("step"), c.optString("action"), c.optLong("actionCode"), c.optString("chosen"), c.optLong("chosenCode"),
+                        c.optDouble("margin", 0.0), c.optBoolean("understood"), c.optString("why"),
+                        c.optJSONArray("options").objects().map { o ->
+                            LineChoice.Alternative(o.optString("label"), o.optLong("code"), o.optDouble("value", 0.0), o.optBoolean("chosen"))
+                        })
                 },
             )
         },
@@ -248,6 +271,13 @@ data class ArchetypeKnowledge(
     val underPerformance: Double,
     val turnsChecked: Int,
     val turnsVerified: Int,
+    /** Choices in its replayed lines, compared by the engine with the other options. */
+    val choices: Int = 0,
+    val understood: Int = 0,
+    /** Choices the engine doesn't understand yet, most frequent first (one example each). */
+    val notUnderstood: List<LineChoice> = emptyList(),
+    /** One understood choice with its reason, as an example. */
+    val example: LineChoice? = null,
 ) {
     data class Choke(val code: Long, val name: String, val times: Int, val lostAfter: Int)
 
@@ -285,6 +315,11 @@ object ReplayKnowledge {
             underPerformance = if (under.isEmpty()) 0.0 else under.map { it.performance }.average(),
             turnsChecked = turns.count { it.check != null },
             turnsVerified = turns.count { it.check?.verified == true },
+            choices = turns.sumOf { it.choices.size },
+            understood = turns.sumOf { t -> t.choices.count { it.understood } },
+            notUnderstood = turns.flatMap { t -> t.choices.filter { !it.understood } }
+                .groupBy { it.actionCode to it.chosenCode }.values.sortedByDescending { it.size }.map { it.first() },
+            example = turns.flatMap { t -> t.choices.filter { it.understood && it.margin > 0.3 } }.maxByOrNull { it.margin },
         )
     }
 
@@ -295,6 +330,20 @@ object ReplayKnowledge {
 
     /** The archetype of a deck: the one most of its Main + Extra Deck belongs to. */
     fun archetypeOf(cards: List<Long>, cn: CardNames): String = UniversalReplay.archetype(cards, cn, emptySet())
+
+    /**
+     * Choices players make in the replays that the engine doesn't understand yet, for a deck with
+     * [cards]: made the same way at least twice inside the same card's effect, and never judged
+     * otherwise by the players (the engine then follows them unless it finds something clearly better).
+     */
+    fun imitationsFor(db: ReplayDatabase, cards: Set<Long>, canonical: (Long) -> Long): List<Imitation> {
+        val deck = cards.map(canonical).toSet()
+        val all = db.turns.flatMap { it.choices }
+        val made = all.groupBy { it.actionCode to it.chosenCode }
+        return all.filter { !it.understood }.map { it.actionCode to it.chosenCode }.distinct()
+            .filter { (action, chosen) -> canonical(action) in deck && canonical(chosen) in deck && (made[action to chosen]?.size ?: 0) >= 2 }
+            .map { (action, chosen) -> Imitation(action, chosen) }
+    }
 
     /**
      * Combo pieces of the verified replay lines that [cards] can play, each weighted by how well
@@ -428,11 +477,12 @@ object ReplayLearning {
                         under = t.under,
                     )
                     val check = try {
-                        val res = engine().videoLines(deck, listOf(input), seconds = 45.0, policy = policies.load())
+                        // also: why each choice in it, against the other options (about 10-30 s a line)
+                        val res = engine().videoLines(deck, listOf(input), seconds = 45.0, policy = policies.load(), explain = 220)
                         res.policyJson?.let { policies.save(it) }
                         res.lines.firstOrNull()?.let { l ->
                             LineCheck(l.verified, l.stepsMatched, l.stepsChecked, l.boardMatch, l.problem,
-                                if (l.verified || l.verifiedSteps > 0) res.libraryJson else null, l.verifiedSteps, l.stepMatch)
+                                if (l.verified || l.verifiedSteps > 0) res.libraryJson else null, l.verifiedSteps, l.stepMatch) to l.choices
                         }
                     } catch (e: CancellationException) {
                         throw e
@@ -441,9 +491,11 @@ object ReplayLearning {
                     }
                     if (check != null) {
                         checked++
-                        if (check.verified) verified++
+                        if (check.first.verified) verified++
                         val cur = database()
-                        save(cur.copy(turns = cur.turns.map { if (it.key == t.key && it.player == t.player) it.copy(check = check) else it }))
+                        save(cur.copy(turns = cur.turns.map {
+                            if (it.key == t.key && it.player == t.player) it.copy(check = check.first, choices = check.second, explained = true) else it
+                        }))
                     }
                 }
                 _state.update { it.copy(note = (if (added == 0) "No new games" else "$added new game${if (added == 1) "" else "s"} analysed") +

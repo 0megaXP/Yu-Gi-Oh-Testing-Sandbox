@@ -166,6 +166,23 @@ fun KnowledgeSummary(k: ArchetypeKnowledge) {
             }
             if (k.turnsChecked > 0) Text("Engine: ${k.turnsVerified} of ${k.turnsChecked} first turns verified and learned",
                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (k.choices > 0) {
+                var open by remember(k.archetype) { mutableStateOf(false) }
+                Text("Choices in its lines: the engine understands ${k.understood} of ${k.choices}" +
+                    if (k.notUnderstood.isNotEmpty()) "; ${k.notUnderstood.size} it doesn't yet (its bots follow the players there)" else "",
+                    style = MaterialTheme.typography.bodySmall)
+                k.example?.let { c ->
+                    Text("Example: ${c.action.substringBefore(" — ")} → ${c.chosen}. ${c.why}",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = if (open) 20 else 3)
+                }
+                if (k.notUnderstood.isNotEmpty()) {
+                    TextButton(onClick = { open = !open }) { Text(if (open) "Hide" else "Choices not understood yet") }
+                    if (open) k.notUnderstood.take(8).forEach { c ->
+                        Text("• ${c.action.substringBefore(" — ")} → ${c.chosen}: ${c.why}",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
+                    }
+                }
+            }
         }
     }
 }

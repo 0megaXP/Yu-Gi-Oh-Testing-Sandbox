@@ -83,6 +83,9 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
   - **What the engine learns:**
     - It replays the opening turn of whoever went first (you or the opponent) with that player's exact deck. Verified lines keep their combo pieces, tagged with the Mulcharmy / Droll condition and weighted by performance, and the move policy learns from them.
     - Those pieces are used by the Play engine, the combo tree and the duel bots for any deck that can play them.
+    - **Why each choice:** at each choice in those lines (what a card searched, discarded, summoned or placed), the engine tries every other option with its best continuation and compares. A choice where the player's pick comes out on top is understood, with the reason in plain words (what it ends with that the next best option doesn't, and what the chosen card does next). Example: "Seneschal: its effect Special Summons Enlisted".
+    - **Not understood yet:** where the engine scores another option higher, the choice is listed as not understood yet, per archetype in Settings. If players made it at least twice, the Play engine, the combo tree and the duel bots follow it unless their search finds something clearly better.
+    - Lines replayed before this are explained on the next *Analyze replays*.
   - **Per archetype:**
     - **In Settings:** games and record going first and second, average activations, the cards where the deck is stopped most (and how often it lost after), Mulcharmy / Droll turns and the best line.
     - **In the Replays tab:** the same summary for that deck, and its Omega games.

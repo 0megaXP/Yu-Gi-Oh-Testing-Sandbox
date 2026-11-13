@@ -523,6 +523,7 @@ class AppViewModel : ViewModel() {
             // Your deck's combo pieces, if its reference boards were built.
             library = pieceLibrary(mine),
             policy = policies.load(),
+            imitate = imitations(mine),
             settings = SearchSettings(
                 iterations = setup.depth.iterations,
                 verifyIterations = setup.depth.verifyIterations,
@@ -582,6 +583,7 @@ class AppViewModel : ViewModel() {
                     seed = System.currentTimeMillis(),
                     library = pieceLibrary(mine),
                     policy = policies.load(),
+                    imitate = imitations(mine),
                 ) { p -> _ui.update { it.copy(play = it.play.copy(treeProgress = p)) } }
                 _ui.update { it.copy(play = it.play.copy(tree = tree)) }
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -666,6 +668,13 @@ class AppViewModel : ViewModel() {
     private fun names(): com.ygosandbox.app.combos.CardNames =
         cardNames?.takeIf { it.first == db.cards.size }?.second
             ?: com.ygosandbox.app.combos.CardNames(db).also { cardNames = db.cards.size to it }
+
+    /** Choices players make in the analysed replays that the engine doesn't understand yet, for this deck. */
+    fun imitations(choice: DeckChoice?): List<com.ygoengine.Imitation> = runCatching {
+        choice ?: return emptyList()
+        com.ygosandbox.app.combos.ReplayKnowledge.imitationsFor(
+            com.ygosandbox.app.combos.ReplayLearning.database(), (choice.main + choice.extra).toSet()) { id -> db.find(id)?.id ?: id }
+    }.getOrDefault(emptyList())
 
     /** What the replay analysis knows about a deck's archetype, for the other bot in a duel (null if nothing). */
     fun deckKnowledge(choice: DeckChoice?): com.ygoengine.DeckKnowledge? = runCatching {
@@ -772,6 +781,8 @@ class AppViewModel : ViewModel() {
                     policy = policies.load(),
                     // what past games say about each deck (where it is stopped, how many plays it has)
                     knowledge = if (deck1First) listOf(deckKnowledge(d1), deckKnowledge(d2)) else listOf(deckKnowledge(d2), deckKnowledge(d1)),
+                    // replay choices the engine doesn't understand yet, followed by each bot
+                    imitate = if (deck1First) listOf(imitations(d1), imitations(d2)) else listOf(imitations(d2), imitations(d1)),
                 )
                 liveDuel = duel
                 publishDuelState(duel)

@@ -54,6 +54,10 @@ object OmegaReplay {
         val deck: Pair<List<Long>, List<Long>>?,
         /** Which player [deck] belongs to. */
         val deckOwner: Int,
+        /** The two players' Omega account ids (Player0, Player1), 0 when missing: the same pair in replays saved close together is one match. */
+        val players: List<Long> = listOf(0L, 0L),
+        /** GameSettings.Mode as Omega writes it. */
+        val mode: Int = -1,
     )
 
     class NotAReplay(msg: String) : Exception(msg)
@@ -70,7 +74,13 @@ object OmegaReplay {
         val deckKey = doc.keys.firstOrNull { it.startsWith("Deck") }
         val deck = (doc[deckKey] as? String)?.let { runCatching { deckCode(it) }.getOrNull() }
         val owner = deckKey?.removePrefix("Deck")?.toIntOrNull() ?: 0
-        return messages(msgs, deck, owner)
+        fun num(x: Any?) = (x as? Number)?.toLong() ?: 0L
+        @Suppress("UNCHECKED_CAST")
+        val settings = doc["GameSettings"] as? Map<String, Any?>
+        return messages(msgs, deck, owner).copy(
+            players = listOf(num(doc["Player0"]), num(doc["Player1"])),
+            mode = settings?.get("Mode")?.let { num(it).toInt() } ?: -1,
+        )
     }
 
     /** An Omega deck code: raw-deflated [main+extra count][side count] then 4-byte passcodes. */

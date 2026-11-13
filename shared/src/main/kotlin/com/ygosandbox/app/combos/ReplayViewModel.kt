@@ -100,15 +100,22 @@ class ReplayViewModel : ViewModel() {
                 val kept = results.filterIsInstance<OmegaImport.Result.Kept>()
                 val dropped = results.filterIsInstance<OmegaImport.Result.Dropped>()
                 val lib = library(deck.id)
+                val before = lib.readUrls
                 val ids = results.map { r -> if (r is OmegaImport.Result.Kept) r.match.url else (r as OmegaImport.Result.Dropped).id }.toSet()
+                // games of one Best of 3 become one match (re-read games join their match again)
+                val matches = OmegaImport.group(kept).map { it.match }
                 save(lib.copy(
-                    matches = lib.matches.filter { it.url !in ids } + kept.map { it.match },
+                    matches = lib.matches.filter { m -> m.url.split('+').none { it in ids } } + matches,
                     dropped = lib.dropped.filter { it.url !in ids } + dropped.map { DroppedVideo(it.id, it.title, it.reason) },
                 ))
-                val lines = kept.mapNotNull { it.line }
+                val known = combos.library(deck.id).readUrls
+                val lines = kept.mapNotNull { it.line }.filter { it.url !in known }
                 combos.add(deck.id, lines)
                 if (lines.isNotEmpty()) combos.check(deck, db, engine)
-                _ui.update { it.copy(runNote = "${kept.size} replay${if (kept.size == 1) "" else "s"} added" +
+                val newGames = kept.count { it.match.url !in before }
+                val bo3 = matches.count { it.games.size > 1 }
+                _ui.update { it.copy(runNote = "$newGames new game${if (newGames == 1) "" else "s"} read" +
+                    (if (bo3 > 0) "; $bo3 Best of 3 match${if (bo3 == 1) "" else "es"} put together" else "") +
                     (if (dropped.isNotEmpty()) ", ${dropped.size} left out (see below)" else "") +
                     (if (lines.isNotEmpty()) ". ${lines.size} first-turn line${if (lines.size == 1) "" else "s"} went to the Combos tab for the engine to check." else ".")) }
             } catch (e: CancellationException) {

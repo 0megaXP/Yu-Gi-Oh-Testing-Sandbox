@@ -189,12 +189,14 @@ private fun OmegaImportCard(deck: DeckAnalysis, vm: AppViewModel, rvm: ReplayVie
                         val files = runCatching {
                             platform.readFolder(folder, ".bytes") { name, modified ->
                                 com.ygosandbox.app.combos.OmegaImport.savedAt(name, modified) >= since
-                            }.filter { (_, b) -> com.ygosandbox.app.combos.OmegaImport.id(b) !in readUrls }
+                            }
                         }
                         reading = false
                         files.onSuccess { fs ->
-                            note = if (fs.isEmpty()) "No new replays from that period in the folder." else null
-                            import(fs)
+                            // every replay of the period is passed on, so a new game joins its Best of 3
+                            val fresh = fs.count { (_, b) -> com.ygosandbox.app.combos.OmegaImport.id(b) !in readUrls }
+                            note = if (fresh == 0) "No new replays from that period in the folder." else null
+                            if (fresh > 0) import(fs)
                         }.onFailure { e -> note = "Couldn't read the folder: ${e.message ?: e.javaClass.simpleName}" }
                     }
                 }) { Text("Analyze replays") }

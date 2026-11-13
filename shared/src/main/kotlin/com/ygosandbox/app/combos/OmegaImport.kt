@@ -11,7 +11,15 @@ import java.security.MessageDigest
 object OmegaImport {
 
     sealed interface Result {
-        data class Kept(val match: MatchReplay, val line: VideoCombo?) : Result
+        data class Kept(
+            val match: MatchReplay,
+            val line: VideoCombo?,
+            /** The two players' Omega account ids. */
+            val players: Set<Long> = emptySet(),
+            val savedAt: Long = 0,
+            /** The winner's account id, 0 when unknown. */
+            val winnerId: Long = 0,
+        ) : Result
         data class Dropped(val id: String, val title: String, val reason: String) : Result
     }
 
@@ -32,6 +40,44 @@ object OmegaImport {
         val options = listOfNotNull(at(a, b, c), at(c, b, a)).filter { it <= now }
         if (options.isEmpty()) return modified
         return if (modified > 0) options.minByOrNull { kotlin.math.abs(it - modified) }!! else options.first()
+    }
+
+    /**
+     * Omega saves each game of a match as its own replay. Games of one Best of 3 are told apart
+     * by: the same two players, saved one after another (each within [gapMs] of the last), at
+     * most 3 games, and none after a player's second win.
+     */
+    fun group(kept: List<Result.Kept>, gapMs: Long = 60 * 60_000L): List<Result.Kept> {
+        val out = ArrayList<Result.Kept>()
+        var cur = ArrayList<Result.Kept>()
+        fun close() {
+            if (cur.isEmpty()) return
+            out += if (cur.size == 1) cur[0] else merge(cur)
+            cur = ArrayList()
+        }
+        for (k in kept.sortedBy { it.savedAt }) {
+            val last = cur.lastOrNull()
+            val wins = cur.groupingBy { it.winnerId }.eachCount().filterKeys { it != 0L }
+            val sameMatch = last != null && k.players.size == 2 && 0L !in k.players && k.players == last.players &&
+                k.savedAt > 0 && last.savedAt > 0 && k.savedAt - last.savedAt in 0..gapMs &&
+                cur.size < 3 && wins.values.none { it >= 2 }
+            if (!sameMatch) close()
+            cur += k
+        }
+        close()
+        return out
+    }
+
+    private fun merge(games: List<Result.Kept>): Result.Kept {
+        val first = games.first().match
+        val title = first.title.replace("YGO Omega replay", "YGO Omega match")
+        val match = first.copy(
+            url = games.joinToString("+") { it.match.url },
+            title = title,
+            opponent = games.map { it.match.opponent }.groupingBy { it }.eachCount().maxByOrNull { it.value }!!.key,
+            games = games.mapIndexed { i, k -> k.match.games.first().copy(number = i + 1) },
+        )
+        return Result.Kept(match, null, games.first().players, games.first().savedAt, 0)
     }
 
     fun convert(fileName: String, bytes: ByteArray, deck: DeckAnalysis, cn: CardNames, allowed: Set<Long>, handTraps: Set<Long>): Result {
@@ -117,6 +163,6 @@ object OmegaImport {
                 interruptions = interrupts, chokePoints = emptyList(), uncertain = emptyList(),
             ).takeIf { steps.size >= 3 }
         } else null
-        return Result.Kept(match, line)
+        return Result.Kept(match, line, g.players.toSet(), savedAt(fileName, 0L), g.winner?.let { g.players[it] } ?: 0L)
     }
 }

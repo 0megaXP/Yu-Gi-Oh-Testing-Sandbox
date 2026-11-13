@@ -54,7 +54,8 @@ data class MatchReplay(
 data class TimelineEntry(val t: Double, val code: Long, val name: String)
 
 data class ReplayLibrary(val deckId: String, val matches: List<MatchReplay>, val dropped: List<DroppedVideo>, val updatedAt: Long) {
-    val readUrls: Set<String> get() = (matches.map { it.url } + dropped.map { it.url }).toSet()
+    // a YGO Omega match keeps its games' replay ids joined with "+"
+    val readUrls: Set<String> get() = (matches.map { it.url } + dropped.map { it.url }).flatMap { it.split('+') }.toSet()
 }
 
 /** Replays saved per deck id in replays/<id>.json. */

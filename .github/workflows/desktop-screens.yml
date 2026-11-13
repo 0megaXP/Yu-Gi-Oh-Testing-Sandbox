@@ -71,8 +71,37 @@ jobs:
           git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "Screenshots of ${GITHUB_SHA::7}"
           git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" screens-out
 
+  # The engine DLL for Windows (cached per engine commit, shared with the main build).
+  engine-windows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Engine version
+        run: echo "ENGINE_SHA=$(git rev-parse HEAD:engine)" >> "$GITHUB_ENV"
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: engine-windows/
+          key: engine-windows-${{ env.ENGINE_SHA }}
+          enableCrossOsArchive: true
+      - name: Build the engine for Windows
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          ENGINE_TOKEN: ${{ secrets.ENGINE_TOKEN }}
+        run: |
+          git -c "url.https://x-access-token:${ENGINE_TOKEN}@github.com/.insteadOf=https://github.com/" \
+            submodule update --init --depth 1 engine
+          sudo apt-get update -q
+          sudo apt-get install -y -q g++-mingw-w64-x86-64-posix
+          engine/tools/build_windows.sh "$PWD/engine-windows"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-windows
+          path: engine-windows/
+
   # The same tour on real Windows (the app as users run it), with a longer duel.
   windows:
+    needs: engine-windows
     runs-on: windows-latest
     defaults:
       run:
@@ -88,16 +117,11 @@ jobs:
         run: |
           git -c "url.https://x-access-token:${ENGINE_TOKEN}@github.com/.insteadOf=https://github.com/" \
             submodule update --init --depth 1 engine
-          echo "ENGINE_SHA=$(git rev-parse HEAD:engine)" >> "$GITHUB_ENV"
 
-      # The engine DLL the main build cached for this engine commit.
-      - uses: actions/cache/restore@v4
+      - uses: actions/download-artifact@v4
         with:
-          path: engine-windows/
-          key: engine-windows-${{ env.ENGINE_SHA }}
-          enableCrossOsArchive: true
-          fail-on-cache-miss: true
-
+          name: engine-windows
+          path: engine-windows
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

@@ -139,45 +139,74 @@ fun ReplaysTab(deck: DeckAnalysis, vm: AppViewModel, rvm: ReplayViewModel, cvm: 
 
 /**
  * YGO Omega replay files: read exactly (every activation, summon and result is in the file),
- * nothing to download or recognise. On Windows the app can take every new replay from Omega's folder.
+ * nothing to download or recognise. The person sets Omega's replay folder once; each run reads
+ * the replays saved in the chosen period that weren't read before.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun OmegaImportCard(deck: DeckAnalysis, vm: AppViewModel, rvm: ReplayViewModel, cvm: ComboViewModel, readUrls: Set<String>, enabled: Boolean) {
     val scope = rememberCoroutineScope()
     val platform = remember { com.ygosandbox.app.platform.AppPlatform.current }
-    val folder = remember { platform.omegaReplays }
+    val prefs = remember { platform.preferences("replays") }
+    var folder by remember { mutableStateOf(prefs.getString("omega_folder", null) ?: platform.omegaReplays?.path ?: "") }
+    var days by remember { mutableStateOf(prefs.getInt("omega_days", 14)) }
     var note by remember { mutableStateOf<String?>(null) }
+    var reading by remember { mutableStateOf(false) }
+    fun setFolder(f: String) {
+        folder = f
+        prefs.edit().putString("omega_folder", f).apply()
+    }
     fun import(files: List<Pair<String, ByteArray>>) {
-        if (files.isEmpty()) return
-        rvm.importOmega(deck, vm.db, files, cvm, vm::engine)
+        if (files.isNotEmpty()) rvm.importOmega(deck, vm.db, files, cvm, vm::engine)
     }
     Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = MaterialTheme.shapes.medium) {
         Column(Modifier.padding(12.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("YGO Omega replays", fontWeight = FontWeight.SemiBold)
             ReplayNote(
-                "Read exactly from the replay file, for free. Going first, the first turn is also added to the Combos tab " +
-                    "for the engine to check." + if (folder == null) " Omega saves them in its Replays folder " +
-                    "(on Windows: %USERPROFILE%\\AppData\\LocalLow\\Duelists Unite\\YGO Omega); copy the .bytes files to this device." else ""
+                "Read exactly from Omega's replay files, for free. Going first, the first turn is also added to the Combos tab " +
+                    "for the engine to check. Omega keeps them on Windows in %USERPROFILE%\\AppData\\LocalLow\\Duelists Unite\\YGO Omega."
             )
+            if (platform.canTypeFolder) {
+                androidx.compose.material3.OutlinedTextField(
+                    value = folder, onValueChange = { setFolder(it) }, singleLine = true,
+                    label = { Text("Replay folder") }, modifier = Modifier.fillMaxWidth(),
+                )
+            } else {
+                ReplayNote(if (folder.isBlank()) "No folder chosen yet." else "Folder: " +
+                    java.net.URLDecoder.decode(folder.substringAfterLast("/tree/"), "UTF-8"))
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf(14 to "Last 2 weeks", 90 to "Last 3 months", 0 to "All").forEach { (d, label) ->
+                    FilterChip(selected = days == d, onClick = { days = d; prefs.edit().putInt("omega_days", d).apply() }, label = { Text(label) })
+                }
+            }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (folder != null) Button(enabled = enabled, onClick = {
+                Button(enabled = enabled && !reading && folder.isNotBlank(), onClick = {
                     scope.launch {
-                        val files = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                            folder.walkTopDown().maxDepth(3).filter { it.isFile && it.extension.equals("bytes", true) }
-                                .map { it.name to it.readBytes() }
-                                .filter { (_, b) -> com.ygosandbox.app.combos.OmegaImport.id(b) !in readUrls }.toList()
+                        reading = true
+                        note = "Looking through the folder…"
+                        val since = if (days == 0) 0L else System.currentTimeMillis() - days * 86_400_000L
+                        val files = runCatching {
+                            platform.readFolder(folder, ".bytes") { name, modified ->
+                                com.ygosandbox.app.combos.OmegaImport.savedAt(name, modified) >= since
+                            }.filter { (_, b) -> com.ygosandbox.app.combos.OmegaImport.id(b) !in readUrls }
                         }
-                        note = if (files.isEmpty()) "No new replays in ${folder.path}." else null
-                        import(files)
+                        reading = false
+                        files.onSuccess { fs ->
+                            note = if (fs.isEmpty()) "No new replays from that period in the folder." else null
+                            import(fs)
+                        }.onFailure { e -> note = "Couldn't read the folder: ${e.message ?: e.javaClass.simpleName}" }
                     }
-                }) { Text("Import new from YGO Omega") }
-                OutlinedButton(enabled = enabled, onClick = {
+                }) { Text("Analyze replays") }
+                OutlinedButton(enabled = enabled && !reading, onClick = {
+                    scope.launch { platform.pickFolder("YGO Omega replay folder", folder.ifBlank { null })?.let { setFolder(it) } }
+                }) { Text(if (folder.isBlank()) "Choose folder" else "Change folder") }
+                TextButton(enabled = enabled && !reading, onClick = {
                     scope.launch {
                         note = null
-                        import(platform.pickFiles("YGO Omega replays", folder))
+                        import(platform.pickFiles("YGO Omega replays", folder.takeIf { platform.canTypeFolder && it.isNotBlank() }?.let(::java.io.File)))
                     }
-                }) { Text("Pick replay files") }
+                }) { Text("Pick files") }
             }
             note?.let { ReplayNote(it) }
         }

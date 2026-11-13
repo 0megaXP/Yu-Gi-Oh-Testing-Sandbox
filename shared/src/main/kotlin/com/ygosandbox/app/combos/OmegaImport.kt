@@ -18,16 +18,29 @@ object OmegaImport {
     fun id(bytes: ByteArray): String =
         "omega:" + MessageDigest.getInstance("SHA-1").digest(bytes).take(10).joinToString("") { "%02x".format(it) }
 
-    /** "26_10_26-02_08_04.bytes" -> "2026-10-26", "02:08"; Omega names replays by when they were saved. */
-    private fun when_(fileName: String): Pair<String, String> {
-        val m = Regex("(\\d{2})_(\\d{2})_(\\d{2})-(\\d{2})_(\\d{2})").find(fileName) ?: return "" to ""
-        val (y, mo, d, h, mi) = m.destructured
-        return "20$y-$mo-$d" to "$h:$mi"
+    /**
+     * When a replay was saved, from its name ("26_10_26-02_08_04": the date is year-month-day or
+     * day-month-year; the reading closest to the file's last change wins), else the last change (ms).
+     */
+    fun savedAt(fileName: String, modified: Long): Long {
+        val m = Regex("(\\d{2})_(\\d{2})_(\\d{2})-(\\d{2})_(\\d{2})").find(fileName) ?: return modified
+        val (a, b, c, h, mi) = m.destructured.toList().map { it.toInt() }
+        fun at(y: Int, mo: Int, d: Int) = runCatching {
+            java.time.LocalDateTime.of(2000 + y, mo, d, h, mi).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        }.getOrNull()
+        val now = System.currentTimeMillis() + 86_400_000L
+        val options = listOfNotNull(at(a, b, c), at(c, b, a)).filter { it <= now }
+        if (options.isEmpty()) return modified
+        return if (modified > 0) options.minByOrNull { kotlin.math.abs(it - modified) }!! else options.first()
     }
 
     fun convert(fileName: String, bytes: ByteArray, deck: DeckAnalysis, cn: CardNames, allowed: Set<Long>, handTraps: Set<Long>): Result {
         val id = id(bytes)
-        val (date, time) = when_(fileName)
+        val saved = savedAt(fileName, 0L).takeIf { it > 0 }?.let {
+            java.time.Instant.ofEpochMilli(it).atZone(java.time.ZoneId.systemDefault()).toLocalDateTime()
+        }
+        val date = saved?.toLocalDate()?.toString() ?: ""
+        val time = saved?.toLocalTime()?.toString()?.take(5) ?: ""
         val title = "YGO Omega replay" + if (date.isNotEmpty()) " · $date $time" else " · $fileName"
         val g = try {
             OmegaReplay.read(bytes)

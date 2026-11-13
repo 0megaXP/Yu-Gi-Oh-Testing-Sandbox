@@ -60,6 +60,22 @@ interface Platform {
      */
     suspend fun pickFiles(title: String, startIn: java.io.File? = null): List<Pair<String, ByteArray>> = emptyList()
 
+    /**
+     * Lets the person choose a folder, returned as text the app keeps: a path on a computer, a
+     * folder the phone granted access to on Android. Null when they cancel.
+     */
+    suspend fun pickFolder(title: String, startIn: String? = null): String? = null
+
+    /** Whether a folder can also be typed or pasted as a path (computers; phones only grant folders by picking). */
+    val canTypeFolder: Boolean get() = false
+
+    /**
+     * The files in [folder] (from [pickFolder], or a typed path) and its subfolders, up to three
+     * levels down, whose name ends with [extension] and that [accept] (name, last changed in ms)
+     * lets through: name to contents.
+     */
+    suspend fun readFolder(folder: String, extension: String, accept: (String, Long) -> Boolean): List<Pair<String, ByteArray>> = emptyList()
+
     /** YGO Omega's replay folder on this computer, or null (not installed, or not a computer). */
     val omegaReplays: java.io.File? get() = null
 

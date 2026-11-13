@@ -59,6 +59,30 @@ class DesktopPlatform(private val resources: File?) : Platform {
             return root.listFiles()?.firstOrNull { it.isDirectory && it.name.equals("Replays", ignoreCase = true) } ?: root
         }
 
+    override val canTypeFolder = true
+
+    override suspend fun pickFolder(title: String, startIn: String?): String? = withContext(Dispatchers.IO) {
+        val start = startIn?.let(::File)?.takeIf { it.isDirectory } ?: omegaReplays
+        val chooser = javax.swing.JFileChooser(start).apply {
+            dialogTitle = title
+            fileSelectionMode = javax.swing.JFileChooser.DIRECTORIES_ONLY
+        }
+        var picked: String? = null
+        javax.swing.SwingUtilities.invokeAndWait {
+            if (chooser.showOpenDialog(null) == javax.swing.JFileChooser.APPROVE_OPTION) picked = chooser.selectedFile?.absolutePath
+        }
+        picked
+    }
+
+    override suspend fun readFolder(folder: String, extension: String, accept: (String, Long) -> Boolean): List<Pair<String, ByteArray>> =
+        withContext(Dispatchers.IO) {
+            val dir = File(folder.trim().trim('"'))
+            if (!dir.isDirectory) error("Folder not found: ${dir.path}")
+            dir.walkTopDown().maxDepth(4)
+                .filter { it.isFile && it.name.endsWith(extension, ignoreCase = true) && accept(it.name, it.lastModified()) }
+                .map { it.name to it.readBytes() }.toList()
+        }
+
     override suspend fun pickFiles(title: String, startIn: File?): List<Pair<String, ByteArray>> = withContext(Dispatchers.IO) {
         val chooser = javax.swing.JFileChooser(startIn ?: omegaReplays).apply {
             dialogTitle = title

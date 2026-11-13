@@ -72,6 +72,21 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
     - **Free with a duel log naming both players** (Duelingbook and the like): the side playing the archetype, turns, games and results come from the log, and the deck-list rule applies to that side.
     - **Free without such a log:** a timeline of the cards shown, in order, with a link to each moment.
     - **Claude reading** uses the same API key as the Combos tab. A 20-minute match costs roughly what 300 images do.
+- **YGO Omega replays, for every deck** (test): in *Settings*, set Omega's replay folder and press *Analyze replays* (or pick files).
+  - **What is read:** every new replay is read exactly from the file, for every deck, both players and every turn. For each turn it records:
+    - the line played and the end board;
+    - going first or second;
+    - the opponent's interruptions and what they answered;
+    - whether it was played under the opponent's Mulcharmy (Fuwalos, Purulia) or Droll & Lock Bird;
+    - how it went: the game's result, how many activations the opponent had next turn, and whether the player lost then. Together these give a performance from 0 to 100.
+  - **What the engine learns:**
+    - It replays the recorded player's first turns with that player's exact deck. Verified lines keep their combo pieces, tagged with the Mulcharmy / Droll condition and weighted by performance, and the move policy learns from them.
+    - Those pieces are used by the Play engine, the combo tree and the duel bots for any deck that can play them.
+  - **Per archetype:**
+    - **In Settings:** games and record going first and second, average activations, the cards where the deck is stopped most (and how often it lost after), Mulcharmy / Droll turns and the best line.
+    - **In the Replays tab:** the same summary for that deck, and its Omega games.
+  - **Bots use it:** in the duel simulator, each bot knows from these games where the other deck is usually stopped and how many plays it has. It uses an interruption on such a choke point even at a small cost, and stops the first play outright when its hand traps and Set interruptions cover the plays that deck usually has left.
+  - Stored in `replaydb.json`, one database for all decks.
 - **Play engine** (test): finds the best plays for an opening hand against a real deck.
   - Pick your deck and the opponent's deck from My decks or any tournament list saved by an Archetype search.
   - Choose going first or second, your 5-card hand (pick or random) and a search depth.

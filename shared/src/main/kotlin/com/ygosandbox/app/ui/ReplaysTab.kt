@@ -72,6 +72,7 @@ fun ReplaysTab(deck: DeckAnalysis, vm: AppViewModel, rvm: ReplayViewModel, cvm: 
     val hasKey = rvm.settings.apiKey.isNotBlank()
     var free by remember { mutableStateOf(rvm.settings.freeReading) }
     var showDropped by rememberSaveable(deck.id) { mutableStateOf(false) }
+    val omega = rememberOmegaMatches(deck, vm)
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item { InterruptionNote() }
@@ -103,10 +104,11 @@ fun ReplaysTab(deck: DeckAnalysis, vm: AppViewModel, rvm: ReplayViewModel, cvm: 
                     enabled = (free || hasKey) && !busyHere && !busyElsewhere)
             }
         }
-        if (ui.searchFor != deck.id) item { OmegaImportCard(deck, vm, rvm, cvm, lib?.readUrls ?: emptySet(), enabled = !busyHere && !busyElsewhere) }
+        if (ui.searchFor != deck.id) item { ArchetypeLearned(deck, vm) }
         if (busyElsewhere) item { ReplayNote("Another deck's matches are being read; wait for that to finish.") }
 
-        val matches = lib?.matches.orEmpty().sortedByDescending { it.date }
+        // YGO Omega games come from the replay analysis in Settings (all decks); videos from here
+        val matches = (lib?.matches.orEmpty().filter { !it.format.startsWith("YGO Omega") } + omega).sortedByDescending { it.date }
         if (matches.isNotEmpty()) item { Record(deck, matches) }
         items(matches, key = { it.url }) { m -> MatchCard(vm, rvm, deck.id, m, openCards) }
 
@@ -420,7 +422,7 @@ private fun ReplayLabel(text: String) {
 }
 
 @Composable
-private fun ReplayNote(text: String, error: Boolean = false) {
+internal fun ReplayNote(text: String, error: Boolean = false) {
     Text(text, style = MaterialTheme.typography.bodySmall,
         color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
 }

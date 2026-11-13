@@ -119,6 +119,9 @@ fun SettingsScreen(ui: UiState, vm: AppViewModel) {
                 }
             }
 
+            // ---- YGO Omega replays, analysed for every deck ----
+            ReplayLearningCard(vm)
+
             // ---- Banlists ----
             BanlistCard(ui, vm)
             androidx.compose.foundation.layout.Spacer(Modifier.padding(12.dp))

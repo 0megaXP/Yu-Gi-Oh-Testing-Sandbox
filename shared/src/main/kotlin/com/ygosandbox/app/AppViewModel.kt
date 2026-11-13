@@ -654,8 +654,27 @@ class AppViewModel : ViewModel() {
         val video = runCatching {
             com.ygosandbox.app.combos.VideoPieces.libraryFor(videoCombos, (choice.main + choice.extra).toSet()) { id -> db.find(id)?.id ?: id }
         }.getOrNull()
-        return com.ygosandbox.app.combos.VideoPieces.merge(referenceFor(choice)?.libraryJson, video)
+        // and pieces of verified YGO Omega replay lines (any deck's) this deck can play
+        val replays = runCatching {
+            com.ygosandbox.app.combos.ReplayKnowledge.libraryFor(
+                com.ygosandbox.app.combos.ReplayLearning.database(), (choice.main + choice.extra).toSet()) { id -> db.find(id)?.id ?: id }
+        }.getOrNull()
+        return com.ygosandbox.app.combos.VideoPieces.merge(com.ygosandbox.app.combos.VideoPieces.merge(referenceFor(choice)?.libraryJson, video), replays)
     }
+
+    @Volatile private var cardNames: Pair<Int, com.ygosandbox.app.combos.CardNames>? = null
+    private fun names(): com.ygosandbox.app.combos.CardNames =
+        cardNames?.takeIf { it.first == db.cards.size }?.second
+            ?: com.ygosandbox.app.combos.CardNames(db).also { cardNames = db.cards.size to it }
+
+    /** What the replay analysis knows about a deck's archetype, for the other bot in a duel (null if nothing). */
+    fun deckKnowledge(choice: DeckChoice?): com.ygoengine.DeckKnowledge? = runCatching {
+        choice ?: return null
+        val cn = names()
+        val arche = com.ygosandbox.app.combos.ReplayKnowledge.archetypeOf(choice.main + choice.extra, cn)
+        if (arche.isBlank()) null
+        else com.ygosandbox.app.combos.ReplayKnowledge.of(com.ygosandbox.app.combos.ReplayLearning.database(), arche, cn)?.forEngine()
+    }.getOrNull()
 
     fun referenceFor(choice: DeckChoice?): com.ygoengine.ReferenceResult? =
         choice?.let { references.load(references.signature(it.main, it.extra)) }
@@ -751,6 +770,8 @@ class AppViewModel : ViewModel() {
                     // The engine asks the person for their own zone choices.
                     human = if (humanMode) bottom else -1,
                     policy = policies.load(),
+                    // what past games say about each deck (where it is stopped, how many plays it has)
+                    knowledge = if (deck1First) listOf(deckKnowledge(d1), deckKnowledge(d2)) else listOf(deckKnowledge(d2), deckKnowledge(d1)),
                 )
                 liveDuel = duel
                 publishDuelState(duel)

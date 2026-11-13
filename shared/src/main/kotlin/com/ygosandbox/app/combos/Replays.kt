@@ -46,16 +46,40 @@ data class MatchReplay(
     val lessons: List<String>,
     /** Free reading without a duel log: the cards shown, in order (no sides, turns or result). */
     val timeline: List<TimelineEntry> = emptyList(),
+    /** Version of the reading rules it was read with ([Readers]); older readings can be read again. */
+    val reader: Int = 0,
 ) {
+    /** Read before the current rules for its kind of source: worth reading again. */
+    val stale: Boolean get() = reader < Readers.current(format)
     val wins: Int get() = games.count { it.won == true }
     val losses: Int get() = games.count { it.won == false }
 }
 
 data class TimelineEntry(val t: Double, val code: Long, val name: String)
 
+/**
+ * Versions of the reading rules, per source. Bump one when its rules change so matches read
+ * before can be read again (YGO Omega replays are re-read automatically from the folder).
+ * 2: cards a player puts on the opponent's field (Angelechy Opposition, Seneschal), their forced
+ * effects and what the opponent summons through them stay that player's turn.
+ */
+object Readers {
+    const val OMEGA = 2
+    const val FREE = 2
+    const val CLAUDE = 2
+    fun current(format: String) = when {
+        format.startsWith("YGO Omega") -> OMEGA
+        format.contains("free reading") -> FREE
+        else -> CLAUDE
+    }
+}
+
 data class ReplayLibrary(val deckId: String, val matches: List<MatchReplay>, val dropped: List<DroppedVideo>, val updatedAt: Long) {
     // a YGO Omega match keeps its games' replay ids joined with "+"
-    val readUrls: Set<String> get() = (matches.map { it.url } + dropped.map { it.url }).flatMap { it.split('+') }.toSet()
+    // (matches read with older rules don't count: they can be read again)
+    val readUrls: Set<String> get() = (matches.filter { !it.stale }.map { it.url } + dropped.map { it.url }).flatMap { it.split('+') }.toSet()
+    /** Matches read with older rules. */
+    val staleUrls: Set<String> get() = matches.filter { it.stale }.flatMap { it.url.split('+') }.toSet()
 }
 
 /** Replays saved per deck id in replays/<id>.json. */
@@ -86,6 +110,7 @@ class ReplayStore() {
                 .put("format", m.format).put("opponent", m.opponent)
                 .put("sideChanges", JSONArray(m.sideChanges)).put("lessons", JSONArray(m.lessons))
                 .put("timeline", JSONArray(m.timeline.map { JSONObject().put("t", it.t).put("code", it.code).put("name", it.name) }))
+                .put("reader", m.reader)
                 .put("games", JSONArray(m.games.map { g ->
                     JSONObject().put("number", g.number).put("weFirst", g.weFirst ?: JSONObject.NULL)
                         .put("won", g.won ?: JSONObject.NULL).put("how", g.how).put("turningPoints", JSONArray(g.turningPoints))
@@ -109,6 +134,7 @@ class ReplayStore() {
                 date = m.optString("date"), format = m.optString("format"), opponent = m.optString("opponent"),
                 sideChanges = m.optJSONArray("sideChanges").strings(), lessons = m.optJSONArray("lessons").strings(),
                 timeline = m.optJSONArray("timeline").objects().map { TimelineEntry(it.optDouble("t"), it.optLong("code"), it.optString("name")) },
+                reader = m.optInt("reader", 0),
                 games = m.optJSONArray("games").objects().map { g ->
                     GameRecord(
                         number = g.optInt("number"), weFirst = g.boolOrNull("weFirst"), won = g.boolOrNull("won"),
@@ -233,7 +259,9 @@ class MatchReader(private val claude: ComboReader) {
                         "ended on, and the interruptions used (by whom, on what). Then the turning points. Use exact " +
                         "card names. A monster a player puts on the opponent's field (for example with Angelechy " +
                         "Opposition) and its mandatory effects there, like Angelechy Seneschal's, are part of that " +
-                        "player's turn: not a new turn and not an interruption by the opponent."
+                        "player's turn: not a new turn and not an interruption by the opponent. The same goes for what " +
+                        "the opponent Special Summons through such an effect (Seneschal lets each player summon a Fairy " +
+                        "Synchro Monster): it happens in that player's turn."
                 )
             }
             val r = runCatching {

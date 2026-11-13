@@ -97,7 +97,7 @@ fun ReplaysTab(deck: DeckAnalysis, vm: AppViewModel, rvm: ReplayViewModel, cvm: 
 
         item {
             if (ui.searchFor == deck.id && (ui.searching || ui.hits.isNotEmpty() || ui.searchError != null)) {
-                PickMatches(deck, vm, rvm, lib?.readUrls ?: emptySet())
+                PickMatches(deck, vm, rvm, lib?.readUrls ?: emptySet(), lib?.staleUrls ?: emptySet())
             } else {
                 FindMatches(deck, vm, rvm, free, onFree = { rvm.settings.freeReading = it; free = it },
                     enabled = (free || hasKey) && !busyHere && !busyElsewhere)
@@ -271,10 +271,10 @@ private fun FindMatches(
 }
 
 @Composable
-private fun PickMatches(deck: DeckAnalysis, vm: AppViewModel, rvm: ReplayViewModel, readUrls: Set<String>) {
+private fun PickMatches(deck: DeckAnalysis, vm: AppViewModel, rvm: ReplayViewModel, readUrls: Set<String>, stale: Set<String> = emptySet()) {
     val ui by rvm.ui.collectAsState()
-    // matches are long: two at a time by default
-    var picked by remember(ui.hits) { mutableStateOf(ui.hits.filter { it.url !in readUrls }.take(2).map { it.url }.toSet()) }
+    // matches are long: two at a time by default (ones read with older rules only when ticked)
+    var picked by remember(ui.hits) { mutableStateOf(ui.hits.filter { it.url !in readUrls && it.url !in stale }.take(2).map { it.url }.toSet()) }
     Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = MaterialTheme.shapes.medium) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -295,7 +295,7 @@ private fun PickMatches(deck: DeckAnalysis, vm: AppViewModel, rvm: ReplayViewMod
                     Column(Modifier.weight(1f)) {
                         Text(h.title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         ReplayNote(listOfNotNull(h.uploader.ifBlank { null }, h.date.ifBlank { null },
-                            ComboViewModel.clock(h.seconds.toDouble()), if (done) "already read" else null).joinToString(" · "))
+                            ComboViewModel.clock(h.seconds.toDouble()), if (done) "already read" else if (h.url in stale) "read with older rules: tick to read again" else null).joinToString(" · "))
                     }
                 }
             }

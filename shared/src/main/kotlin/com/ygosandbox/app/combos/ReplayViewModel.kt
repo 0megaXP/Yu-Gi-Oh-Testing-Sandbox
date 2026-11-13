@@ -210,6 +210,7 @@ class ReplayViewModel : ViewModel() {
         val base = MatchReplay(
             url = hit.url, title = hit.title, uploader = hit.uploader, date = video.date.ifEmpty { hit.date },
             format = "", opponent = "", games = emptyList(), sideChanges = emptyList(), lessons = emptyList(),
+            reader = Readers.FREE,
         )
         val players = r.players
         val score = players.associateWith { p -> r.cards.count { it.player == p && it.code in allowed && it.code !in handTraps } }
@@ -261,22 +262,37 @@ class ReplayViewModel : ViewModel() {
             turns = ArrayList()
             turnNo = 0
         }
+        // Set right after a card the archetype's player put on the other side acts there: what the
+        // opponent summons next goes through that card's forced effect (Seneschal lets each player
+        // Special Summon a Fairy Synchro Monster), so it doesn't start the opponent's turn either.
+        var forced = false
         for (e in r.events) {
             val actor = turnEvents.firstOrNull { it.code != null }?.player
             when {
-                e.action == "game_end" -> closeGame(e)
-                e.action == "turn" -> closeTurn()
+                e.action == "game_end" -> { forced = false; closeGame(e) }
+                e.action == "turn" -> { forced = false; closeTurn() }
                 // A card of the archetype's player shown on the other side during their turn: one they
                 // put on the opponent's field (Angelechy Opposition, Seneschal), with its forced
                 // effects. It's still their turn and their play, not the opponent starting a turn.
-                e.code != null && actor == side && e.player == other && e.code in allowed && e.code !in handTraps ->
+                e.code != null && actor == side && e.player == other && e.code in allowed && e.code !in handTraps -> {
                     turnEvents += e.copy(player = side)
+                    forced = true
+                }
+                // the opponent summoning through that effect: theirs, but still this turn
+                forced && e.code != null && actor == side && e.player == other && e.action != "activate" -> {
+                    turnEvents += e
+                    forced = false
+                }
                 e.code != null && turnEvents.isNotEmpty() && e.action != "activate" &&
                     actor.let { it != null && it != e.player } -> {
+                    forced = false
                     closeTurn()
                     turnEvents += e
                 }
-                else -> turnEvents += e
+                else -> {
+                    if (e.code != null && e.player == side) forced = false
+                    turnEvents += e
+                }
             }
         }
         closeGame(null)
@@ -374,6 +390,7 @@ class ReplayViewModel : ViewModel() {
                 url = hit.url, title = hit.title, uploader = hit.uploader, date = video.date.ifEmpty { hit.date },
                 format = raw.format.takeIf { it != "unknown" } ?: "",
                 opponent = opponent,
+                reader = Readers.CLAUDE,
                 games = raw.games.map { g ->
                     GameRecord(
                         number = g.number,

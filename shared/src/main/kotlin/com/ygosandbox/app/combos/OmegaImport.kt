@@ -142,7 +142,7 @@ object OmegaImport {
                     turns = turns, turningPoints = emptyList(),
                 )
             ),
-            sideChanges = emptyList(), lessons = emptyList(),
+            sideChanges = emptyList(), lessons = emptyList(), reader = Readers.OMEGA,
         )
 
         // Going first: turn 1 is a combo from the opening hand, with no opponent board. The

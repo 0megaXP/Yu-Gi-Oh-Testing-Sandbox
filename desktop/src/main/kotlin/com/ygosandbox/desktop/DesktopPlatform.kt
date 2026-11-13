@@ -21,8 +21,11 @@ class DesktopPlatform(private val resources: File?) : Platform {
     override val filesDir: File = (System.getenv("APPDATA")?.let { File(it, "YGO Sandbox") }
         ?: File(System.getProperty("user.home"), ".ygosandbox")).apply { mkdirs() }
 
-    /** %LOCALAPPDATA%\YGO Sandbox\cache on Windows. */
-    override val cacheDir: File = (System.getenv("LOCALAPPDATA")?.let { File(it, "YGO Sandbox/cache") }
+    /**
+     * %LOCALAPPDATA%\YGO Sandbox Cache on Windows: outside %LOCALAPPDATA%\YGO Sandbox, which is the
+     * app's install folder, which an update removes along with the old version.
+     */
+    override val cacheDir: File = (System.getenv("LOCALAPPDATA")?.let { File(it, "YGO Sandbox Cache") }
         ?: File(filesDir, "cache")).apply { mkdirs() }
 
     private val stores = HashMap<String, PropertiesStore>()
@@ -43,34 +46,55 @@ class DesktopPlatform(private val resources: File?) : Platform {
      * Installs the update once this app has fully closed, then opens the new version.
      *
      * The installer has to wait: started while the app still runs, it removes the old version
-     * but can't replace the files the app holds open, which left no app at all. It also runs
-     * from a copy in %TEMP%, outside the app's own folders, and writes a log there
-     * (YGOSandbox-update.log) to look at if an update ever fails.
+     * but can't replace the files the app holds open, which left no app at all. It runs from a
+     * copy in %TEMP% (outside the install folder, which the update replaces) and from %TEMP% as
+     * working folder. If the app still isn't there afterwards it tries once more, and failing
+     * that opens the normal installer window so it can be finished by hand. The installer log is
+     * %TEMP%\YGOSandbox-update.log; each attempt's result is added to YGOSandbox-update.txt there.
      */
     override fun installUpdate(file: File) {
         val tmp = File(System.getProperty("java.io.tmpdir"))
         val msi = File(tmp, "YGOSandbox-update.msi")
         file.copyTo(msi, overwrite = true)
-        val log = File(tmp, "YGOSandbox-update.log")
-        val exe = ProcessHandle.current().info().command().orElse("")
+        val log = File(tmp, "YGOSandbox-update.log").apply { delete() }
+        val status = File(tmp, "YGOSandbox-update.txt")
         val pid = ProcessHandle.current().pid()
         fun q(x: String) = "'" + x.replace("'", "''") + "'"
+        fun quoted(f: File) = q("\"" + f.absolutePath + "\"")
         val script = File(tmp, "YGOSandbox-update.ps1")
         script.writeText(
             """
             Wait-Process -Id $pid -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 1
-            ${'$'}p = Start-Process msiexec -ArgumentList @('/i', ${q("\"" + msi.absolutePath + "\"")}, '/passive', '/norestart', '/l*v', ${q("\"" + log.absolutePath + "\"")}) -Wait -PassThru
-            ${'$'}exe = ${q(exe)}
-            if (${'$'}exe -and (Test-Path ${'$'}exe)) { Start-Process ${'$'}exe }
+            Start-Sleep -Seconds 2
+            ${'$'}exe = ${q(appExe()?.absolutePath.orEmpty())}
+            function Install { (Start-Process msiexec -ArgumentList @('/i', ${quoted(msi)}, '/passive', '/norestart', '/l*v+', ${quoted(log)}) -Wait -PassThru).ExitCode }
+            ${'$'}code = Install
+            if (${'$'}exe -and -not (Test-Path ${'$'}exe)) { Start-Sleep -Seconds 3; ${'$'}code = Install }
+            "${'$'}(Get-Date -Format s) installer exit code ${'$'}code" | Out-File -Append -Encoding utf8 ${q(status.absolutePath)}
+            if (${'$'}exe -and (Test-Path ${'$'}exe)) { Start-Process -FilePath ${'$'}exe -WorkingDirectory (Split-Path ${'$'}exe) }
+            elseif (${'$'}exe) { Start-Process msiexec -ArgumentList @('/i', ${quoted(msi)}) }
             """.trimIndent()
         )
         ProcessBuilder("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", script.absolutePath)
+            .directory(tmp)
+            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+            .redirectError(ProcessBuilder.Redirect.DISCARD)
             .start()
         Thread {
             Thread.sleep(500)
             exitProcess(0)
         }.start()
+    }
+
+    /**
+     * The installed app's launcher ("YGO Sandbox.exe"), to open again after an update. Null when
+     * running from a development build (java.exe), where there is nothing to reopen.
+     */
+    private fun appExe(): File? {
+        val self = ProcessHandle.current().info().command().orElse(null)?.let(::File)
+        if (self != null && self.name.endsWith(".exe", ignoreCase = true) && !self.name.startsWith("java", ignoreCase = true))
+            return self
+        return System.getenv("LOCALAPPDATA")?.let { File(it, "YGO Sandbox/YGO Sandbox.exe") }?.takeIf { it.exists() }
     }
 
     override val interruptedHint = "Open the app again and run it once more: it continues where it stopped."

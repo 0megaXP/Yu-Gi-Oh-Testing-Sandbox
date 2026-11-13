@@ -78,7 +78,7 @@ fun SandboxApp(vm: AppViewModel) {
             // On a wide window (the desktop app) list screens keep a readable width, centred, so
             // their header icons stay next to the content; the duel board and combo trees use it all.
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
-                val full = ui.screen == Screen.Duel || ui.screen == Screen.ComboTree
+                val full = (ui.screen == Screen.Duel && ui.duel.active) || ui.screen == Screen.ComboTree
                 val width = if (full) maxWidth else minOf(maxWidth, MAX_CONTENT_WIDTH)
                 CompositionLocalProvider(LocalGridColumns provides gridColumnsFor(width)) {
                 Box(Modifier.width(width).fillMaxHeight()) {

@@ -204,7 +204,7 @@ private fun OmegaImportCard(deck: DeckAnalysis, vm: AppViewModel, rvm: ReplayVie
                 TextButton(enabled = enabled && !reading, onClick = {
                     scope.launch {
                         note = null
-                        import(platform.pickFiles("YGO Omega replays", folder.takeIf { platform.canTypeFolder && it.isNotBlank() }?.let(::java.io.File)))
+                        import(platform.pickFiles("YGO Omega replays", folder.takeIf { platform.canTypeFolder && it.isNotBlank() }?.let { java.io.File(it) }))
                     }
                 }) { Text("Pick files") }
             }

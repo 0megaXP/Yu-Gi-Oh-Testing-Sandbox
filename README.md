@@ -135,6 +135,7 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
   - A delay between bot moves (0–3 s) keeps the game easy to follow, with pause, one-move step and a "Hurry" button while a bot thinks.
   - The board shows both fields (opponent mirrored), the Extra Monster Zones, hands, LP, Deck/Extra/GY/banished counts (tap to see the cards) and a duel log.
   - On your turn, the panel at the bottom lists every legal action or answer. Zone placement and other choices that never matter are made for you.
+  - Bots Normal Summon and Set only when it's needed: a Normal Summon comes just before the play that uses that monster, and Sets come after the combo (so they don't take Spell & Trap Zones the combo needs). If the opponent interrupts first, the card is still in hand. A hand trap isn't summoned unless something uses it.
   - In bot vs bot you can show both hands and set cards.
   - The bot sees every card, including your hand.
 - **Background work:** long jobs keep running when you leave the app or turn the screen off.

@@ -28,6 +28,22 @@ class AndroidPlatform(context: Context) : Platform {
 
     override suspend fun openEngine(): YgoEngine = YgoEngine.open(app)
 
+    override fun lastExitReason(since: Long): String? {
+        if (android.os.Build.VERSION.SDK_INT < 30) return null
+        val am = app.getSystemService(android.app.ActivityManager::class.java) ?: return null
+        val info = runCatching { am.getHistoricalProcessExitReasons(app.packageName, 0, 1).firstOrNull() }.getOrNull() ?: return null
+        if (info.timestamp < since) return null
+        val detail = info.description?.takeIf { it.isNotBlank() }?.let { " ($it)" } ?: ""
+        return when (info.reason) {
+            android.app.ApplicationExitInfo.REASON_CRASH_NATIVE ->
+                "The app closed because native code crashed, most likely the play engine (the part that runs the duel rules and the bots)$detail."
+            android.app.ApplicationExitInfo.REASON_CRASH -> "The app closed because of an error$detail."
+            android.app.ApplicationExitInfo.REASON_ANR -> "Android closed the app because it stopped responding$detail."
+            android.app.ApplicationExitInfo.REASON_LOW_MEMORY -> "Android closed the app because the phone ran low on memory."
+            else -> null
+        }
+    }
+
     override val updateAssetSuffix = ".apk"
     override fun canInstallUpdates() = AndroidUpdater.canInstall(app)
     override fun requestInstallPermission() = AndroidUpdater.openInstallPermissionSettings(app)

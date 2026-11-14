@@ -34,6 +34,19 @@ class DesktopPlatform(private val resources: File?) : Platform {
     override fun preferences(name: String): KeyValueStore =
         stores.getOrPut(name) { PropertiesStore(File(filesDir, "settings/$name.properties")) }
 
+    /**
+     * Java's crash files (hs_err_pid*.log): the app asks for them next to its install folder
+     * (-XX:ErrorFile); Java falls back to the working folder or the temp folder.
+     */
+    override fun crashFiles(): List<File> {
+        val dirs = listOfNotNull(
+            resources?.parentFile?.parentFile, resources?.parentFile,
+            File(System.getProperty("user.dir")), File(System.getProperty("java.io.tmpdir")), File(System.getProperty("user.home")),
+        ).distinct()
+        return dirs.flatMap { d -> d.listFiles { f -> f.name.startsWith("hs_err_pid") && f.name.endsWith(".log") }?.toList().orEmpty() }
+            .sortedByDescending { it.lastModified() }
+    }
+
     override suspend fun openEngine(): YgoEngine = withContext(Dispatchers.IO) {
         val pack = resources?.let { File(it, "ygoe") }?.takeIf { File(it, "scripts.pack").exists() }
             ?: error("The engine's card pack is missing from the app's folder. Reinstall YGO Sandbox.")
@@ -82,6 +95,7 @@ class DesktopPlatform(private val resources: File?) : Platform {
             .start()
         Thread {
             Thread.sleep(500)
+            com.ygosandbox.app.platform.CrashReports.cleanExit()
             exitProcess(0)
         }.start()
     }

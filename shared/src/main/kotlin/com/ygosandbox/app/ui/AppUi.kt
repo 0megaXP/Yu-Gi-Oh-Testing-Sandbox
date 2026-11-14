@@ -69,6 +69,8 @@ fun SandboxApp(vm: AppViewModel) {
         vm.dismissMessage()
     }
     BackHandler(enabled = ui.stack.size > 1) { vm.back() }
+    // after a crash: what went wrong, with the detailed report
+    CrashNoticeDialog()
 
     Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {

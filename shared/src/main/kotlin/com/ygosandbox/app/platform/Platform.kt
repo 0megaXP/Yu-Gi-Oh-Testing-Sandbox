@@ -29,6 +29,14 @@ interface Platform {
     /** Loads the play engine (on Android the first run copies its card scripts into storage). */
     suspend fun openEngine(): YgoEngine
 
+    // ---- crash reports (CrashReports)
+
+    /** Crash files the system writes when the app dies (Java's hs_err_pid*.log on a computer). */
+    fun crashFiles(): List<File> = emptyList()
+
+    /** Why the app's last run ended, when the system keeps that and it was a crash (Android), else null. */
+    fun lastExitReason(since: Long): String? = null
+
     // ---- updates (GitHub releases)
 
     /** File name ending of this platform's download in a release (".apk", ".msi"). */

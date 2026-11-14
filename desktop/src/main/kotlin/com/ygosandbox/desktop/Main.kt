@@ -27,6 +27,7 @@ import com.ygosandbox.app.AppViewModel
 import com.ygosandbox.app.platform.AppPlatform
 import com.ygosandbox.app.platform.DesktopBack
 import com.ygosandbox.app.ui.SandboxApp
+import com.ygosandbox.app.platform.CrashReports
 import com.ygosandbox.app.ui.SandboxTheme
 import com.ygosandbox.app.work.BackgroundWork
 import okio.Path.Companion.toOkioPath
@@ -42,6 +43,8 @@ fun main() {
     val platform = DesktopPlatform(resources)
     AppPlatform.current = platform
     CrashLog.install()
+    // notes what the app does, and explains the last run's crash, if it crashed
+    CrashReports.start(uncleanExitMeansCrash = System.getenv("YGO_TOUR") == null)
     BackgroundWork.install()
 
     // Card pictures: kept on disk like on the phone, so they load instantly the second time.
@@ -57,7 +60,7 @@ fun main() {
     }
 
     val vm = AppViewModel()
-    CrashLog.context = { "Screen: ${vm.ui.value.screen}" + if (vm.ui.value.duel.active) " · duel running" else "" }
+    CrashReports.context = { vm.crashContext() }
     val viewModels = object : ViewModelStoreOwner {
         override val viewModelStore = ViewModelStore()
     }
@@ -74,7 +77,7 @@ fun main() {
             },
         ) {
         Window(
-            onCloseRequest = ::exitApplication,
+            onCloseRequest = { CrashReports.cleanExit(); exitApplication() },
             title = "YGO Sandbox",
             state = rememberWindowState(
                 size = size,
@@ -84,7 +87,7 @@ fun main() {
         ) {
             // Smaller than this and the board and lists stop fitting.
             LaunchedEffect(Unit) { window.minimumSize = java.awt.Dimension(720, 600) }
-            if (tour != null) LaunchedEffect(Unit) { Tour(vm, window, tour).run(); exitApplication() }
+            if (tour != null) LaunchedEffect(Unit) { Tour(vm, window, tour).run(); CrashReports.cleanExit(); exitApplication() }
             CompositionLocalProvider(LocalViewModelStoreOwner provides remember { viewModels }) {
                 SandboxTheme {
                     SandboxApp(vm)

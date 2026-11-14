@@ -42,6 +42,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import com.ygosandbox.app.platform.CrashReports
 import kotlinx.coroutines.launch
 
 sealed interface Screen {
@@ -120,10 +121,25 @@ class AppViewModel : ViewModel() {
 
     // ---------- Navigation ----------
 
-    fun open(screen: Screen) = _ui.update { it.copy(stack = it.stack + screen) }
+    fun open(screen: Screen) {
+        CrashReports.note("Open $screen")
+        _ui.update { it.copy(stack = it.stack + screen) }
+    }
+
+    /** What the app is doing now, for crash reports. */
+    fun crashContext(): String {
+        val u = _ui.value
+        val d = u.duel
+        val duel = d.state?.let { s ->
+            " · duel: ${d.names.joinToString(" vs ")}, turn ${s.turn}, ${s.phase}, LP ${s.players.joinToString("/") { it.lp.toString() }}" +
+                (s.decision?.let { " · waiting for player ${it.player + 1} (${it.type})" } ?: "")
+        } ?: if (d.active) " · duel starting" else ""
+        return "Screen: ${u.screen}$duel"
+    }
 
     /** Returns false when already on the main menu. */
     fun back(): Boolean {
+        CrashReports.note("Back from ${_ui.value.screen}")
         if (_ui.value.stack.size <= 1) return false
         _ui.update { it.copy(stack = it.stack.dropLast(1)) }
         return true
@@ -771,6 +787,10 @@ class AppViewModel : ViewModel() {
                 log = listOf(LogEntry(0, "${names[0]} goes first.")), moves = emptyList(), paused = false, thinking = false, error = null,
             )
         }
+        CrashReports.note(
+            "Duel start: ${names.joinToString(" vs ")} · ${setup.mode} · levels ${levels.joinToString("/")} · " +
+                "decks ${d1.name} (${d1.main.size}+${d1.extra.size}) and ${d2.name} (${d2.main.size}+${d2.extra.size})"
+        )
         duelJob = viewModelScope.launch {
             try {
                 // Each bot uses its deck's combo pieces when that deck has reference boards.
@@ -795,6 +815,8 @@ class AppViewModel : ViewModel() {
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
+                CrashReports.note("Duel stopped by an error: $e")
+                CrashReports.record(e, Thread.currentThread().name, fatal = false)
                 updateDuel { it.copy(starting = false, error = "The duel stopped: ${e.message ?: e.toString()}") }
             }
         }
@@ -802,6 +824,8 @@ class AppViewModel : ViewModel() {
 
     private suspend fun publishDuelState(duel: LiveDuel) {
         val s = duel.state()
+        CrashReports.note("Duel: turn ${s.turn}, ${s.phase}, LP ${s.players.joinToString("/") { it.lp.toString() }}" +
+            (s.log.lastOrNull()?.let { " · $it" } ?: ""))
         updateDuel { d ->
             val lines = s.log.mapIndexed { i, line ->
                 LogEntry(s.logPlayers.getOrElse(i) { -1 }, line.replace("[P0]", d.names[0]).replace("[P1]", d.names[1]))
@@ -837,6 +861,7 @@ class AppViewModel : ViewModel() {
                 humanChoice = choice
                 val index = choice.await()
                 humanChoice = null
+                CrashReports.note("Duel: you choose \"${decision.options.getOrNull(index)?.label ?: index}\" (${decision.type})")
                 if (!duel.respond(index)) showMessage("That choice isn't allowed right now")
             } else {
                 // Bot: wait while paused (a Step request lets one move through), then the delay.
@@ -850,8 +875,10 @@ class AppViewModel : ViewModel() {
                     delay(_ui.value.duel.setup.delayMs)
                 }
                 updateDuel { it.copy(thinking = true) }
+                CrashReports.note("Duel: bot ${decision.player + 1} decides (${decision.type}: ${decision.prompt.take(120)}, ${decision.options.size} options)")
                 try {
-                    duel.botMove(_ui.value.duel.levels[decision.player])
+                    val move = duel.botMove(_ui.value.duel.levels[decision.player])
+                    CrashReports.note("Duel: bot ${decision.player + 1} chose \"$move\"")
                 } finally {
                     updateDuel { it.copy(thinking = false) }
                 }
@@ -879,6 +906,7 @@ class AppViewModel : ViewModel() {
 
     /** Ends the current duel and goes back to the setup. */
     fun stopDuel() {
+        if (liveDuel != null || duelJob != null) CrashReports.note("Duel ended by the player")
         duelJob?.cancel()
         duelJob = null
         humanChoice?.cancel()

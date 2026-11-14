@@ -36,7 +36,9 @@ object OmegaReplay {
          * searches, placements, or it only touches their own cards, like removing their own
          * Seneschal from the other field), "response" (it answers the opponent's chain link and
          * gains nothing), "removal" (it targets or removes the opponent's cards and gains nothing).
-         * An effect that removes and also builds (Angelechy Enlisted) is "combo". Other events: "combo".
+         * An effect that removes and also builds (Angelechy Enlisted) is "combo". Other events: "combo",
+         * except "opponent": the other player summoning inside the turn player's own effect (with Angelechy
+         * Seneschal on their field, each player can Special Summon a Fairy Synchro), part of the combo's story.
          */
         val role: String = "combo",
     )
@@ -338,7 +340,9 @@ object OmegaReplay {
                         r and REASON_RITUAL != 0L -> "ritual_summon"
                         else -> "special_summon"
                     }
-                    events += Event(by(p, c), action, c, onOpponentField = by(p, c) != p)
+                    // the other player summoning while the turn player's own effect resolves
+                    val inside = resolving?.let { it.who == turnPlayer && by(p, c) != turnPlayer } == true
+                    events += Event(by(p, c), action, c, onOpponentField = by(p, c) != p, role = if (inside) "opponent" else "combo")
                 }
                 MSG_SET -> {
                     val p = u8(m, 5) and 1

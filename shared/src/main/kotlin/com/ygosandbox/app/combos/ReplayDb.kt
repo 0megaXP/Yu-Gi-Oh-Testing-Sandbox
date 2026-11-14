@@ -208,8 +208,13 @@ class ReplayDbStore {
 // ---------------------------------------------------------------- reading a replay, for every deck
 
 object UniversalReplay {
-    /** 2: both players' views (decks, hands, draws) when the replay has them. 3: steps tagged combo / response / removal. */
-    const val VERSION = 3
+    /**
+     * 2: both players' views (decks, hands, draws) when the replay has them. 3: steps tagged combo / response /
+     * removal. 4: the opponent's summons inside the player's effects; removals sent to the engine as optional.
+     */
+    const val VERSION = 4
+    /** Engine replays of first turns made by games read before this version are done again (the replaying changed). */
+    const val CHECK_SINCE = 4
 
     /** Mulcharmy cards and Droll & Lock Bird, by name: the opponent's draw / search punishers. */
     fun punisher(name: String): String? = when {
@@ -243,7 +248,8 @@ object UniversalReplay {
                 // with both views, for the other one too
                 hand = if (i == 0 && (p == g.deckOwner || g.fullInfo) && g.openingHands[p].none { it == 0L })
                     g.openingHands[p].map(::c) else emptyList(),
-                steps = mine.map { e ->
+                // the player's events, and the opponent's summons inside the player's own effects
+                steps = t.events.filter { it.player == p || it.role == "opponent" }.map { e ->
                     ComboStep(null, e.action, c(e.code), cn.name(e.code), if (e.onOpponentField) "on the opponent's field" else "", e.role)
                 },
                 endBoard = t.endField[p].map { (code, where) -> BoardCard(c(code), cn.name(code), where) },
@@ -464,8 +470,11 @@ object ReplayLearning {
                 val fresh = files.filter { (_, b) -> OmegaImport.id(b).let { it !in data.ids || it in outdated } }
                 val again = fresh.map { (_, b) -> OmegaImport.id(b) }.filter { it in outdated }.toSet()
                 // the engine's replays already done for those games are kept
-                fun comboSig(t: ReplayTurn) = t.steps.filter { !it.interaction }.map { it.action to it.code }
-                val oldTurns = data.turns.filter { it.game in again && it.check != null }.associateBy { "${it.key}/${it.player}" }
+                // what the engine replays
+                fun comboSig(t: ReplayTurn) = t.steps.filter { it.role != "response" }.map { "${it.action}/${it.role}" to it.code }
+                val readers = data.games.associate { it.id to it.reader }
+                val oldTurns = data.turns.filter { it.game in again && it.check != null && (readers[it.game] ?: 0) >= UniversalReplay.CHECK_SINCE }
+                    .associateBy { "${it.key}/${it.player}" }
                 val games = ArrayList(data.games.filter { it.id !in again })
                 val turns = ArrayList(data.turns.filter { it.game !in again })
                 val unreadable = ArrayList(data.unreadable)
@@ -508,7 +517,12 @@ object ReplayLearning {
                         id = t.key, hand = t.hand,
                         // the combo only: answers to the opponent and removals of their cards aren't
                         // part of it (and can't be played when the engine replays the line alone)
-                        steps = t.steps.filter { !it.interaction }.map { VideoStepInput(it.action, it.code ?: 0L, it.detail) },
+                        // the combo, with the removals of the player's own turn as optional steps (Angelechy
+                        // Enlisted banishing a monster also sets up the next summon) and the opponent's
+                        // summons inside the combo's effects as theirs; answers to the opponent aren't part of it
+                        steps = t.steps.filter { it.role != "response" }.map {
+                            VideoStepInput(it.action, it.code ?: 0L, it.detail, optional = it.role == "removal", byOpponent = it.role == "opponent")
+                        },
                         endBoard = t.endBoard.filter { it.onField }.map { it.code },
                         under = t.under,
                     )

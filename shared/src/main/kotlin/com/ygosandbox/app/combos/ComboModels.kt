@@ -11,7 +11,10 @@ import java.io.File
 /** One step of a combo read from a video; [code] is null when the card couldn't be identified. */
 data class ComboStep(
     val t: Double?, val action: String, val code: Long?, val name: String, val detail: String,
-    /** "combo" (builds the player's board), "response" (answers the opponent) or "removal" (hits their cards). */
+    /**
+     * "combo" (builds the player's board), "response" (answers the opponent), "removal" (hits their cards)
+     * or "opponent" (the opponent summoning inside one of the player's effects, e.g. with Angelechy Seneschal).
+     */
     val role: String = "combo",
 ) {
     val interaction: Boolean get() = role != "combo"

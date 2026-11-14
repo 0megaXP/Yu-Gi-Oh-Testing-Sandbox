@@ -31,6 +31,14 @@ object OmegaReplay {
          * player as the one summoning it or activating its effect.
          */
         val onOpponentField: Boolean = false,
+        /**
+         * For an activation, what it did for [player]: "combo" (it builds their board: summons,
+         * searches, placements, or it only touches their own cards, like removing their own
+         * Seneschal from the other field), "response" (it answers the opponent's chain link and
+         * gains nothing), "removal" (it targets or removes the opponent's cards and gains nothing).
+         * An effect that removes and also builds (Angelechy Enlisted) is "combo". Other events: "combo".
+         */
+        val role: String = "combo",
     )
 
     data class Turn(
@@ -182,7 +190,10 @@ object OmegaReplay {
     private const val MSG_SPSUMMONING = 62
     private const val MSG_FLIPSUMMONING = 64
     private const val MSG_CHAINING = 70
+    private const val MSG_CHAIN_SOLVING = 72
+    private const val MSG_CHAIN_SOLVED = 73
     private const val MSG_CHAIN_END = 74
+    private const val MSG_BECOME_TARGET = 83
     private const val MSG_CONFIRM_CARDS = 31
     private const val MSG_DRAW = 90
 
@@ -218,6 +229,17 @@ object OmegaReplay {
         val opening = listOf(ArrayList<Long>(), ArrayList())
         val seen = listOf(HashSet<Long>(), HashSet())
         val chain = ArrayList<Long>()
+        // Per chain link: its event's index, who it belongs to, whether it answers the other
+        // player, and what its resolution did (for the role).
+        class Link(val event: Int, val who: Int, val answers: Boolean) {
+            var gains = false      // built the player's board (summon, search, placement, add to hand)
+            var hitsOpponent = false  // targeted / removed a card the other player owns
+        }
+        val links = ArrayList<Link>()
+        var resolving: Link? = null
+        // field slots (side, location, sequence) -> card, to name a chain link's targets
+        val slots = HashMap<Triple<Int, Int, Int>, Long>()
+        fun owner(side: Int, c: Long) = given[side to c] ?: side
         // the summon type of a card being Special Summoned, from the move that put it on the field
         val lastMoveReason = HashMap<Long, Long>()
         // Set cards come with no code; the move just before names the card for its owner
@@ -241,6 +263,7 @@ object OmegaReplay {
             if (m.isEmpty()) continue
             when (u8(m, 0)) {
                 MSG_NEW_TURN -> {
+                    links.clear(); resolving = null
                     closeTurn()
                     turnPlayer = u8(m, 1) and 1
                     if (first < 0) first = turnPlayer
@@ -259,6 +282,20 @@ object OmegaReplay {
                     val toP = u8(m, 9) and 1; val toL = u8(m, 10)
                     val why = u32(m, 13)
                     if (c != 0L) lastMoveReason[c] = why
+                    val fromSeq = u8(m, 7); val toSeq = u8(m, 11)
+                    // what the resolving chain link did: built its player's board, or removed the other's card
+                    resolving?.let { l ->
+                        val fieldFrom = fromL and LOC_OVERLAY == 0 && (fromL == LOC_MZONE || fromL == LOC_SZONE)
+                        val fieldTo = toL and LOC_OVERLAY == 0 && (toL == LOC_MZONE || toL == LOC_SZONE)
+                        val ownerFrom = if (fieldFrom) owner(fromP, c) else fromP
+                        if (fieldFrom && ownerFrom != l.who && !fieldTo) l.hitsOpponent = true
+                        // a card of theirs onto any field (own or the opponent's) or into their hand
+                        if (ownerFrom == l.who && (fieldTo || (toL == LOC_HAND && toP == l.who)) && !fieldFrom) l.gains = true
+                        // or one of their monsters moved onto the other field (Angelechy Enlisted
+                        // changing control after banishing: that sets up their next summon)
+                        if (fieldFrom && fieldTo && fromP != toP && ownerFrom == l.who) l.gains = true
+                    }
+                    if (fromL and LOC_OVERLAY == 0 && (fromL == LOC_MZONE || fromL == LOC_SZONE)) slots.remove(Triple(fromP, fromL, fromSeq))
                     if (toL == LOC_SZONE || toL == LOC_MZONE) lastToSZone[toP] = c
                     val fromField = fromL and LOC_OVERLAY == 0 && (fromL == LOC_MZONE || fromL == LOC_SZONE)
                     val toField = toL and LOC_OVERLAY == 0 && (toL == LOC_MZONE || toL == LOC_SZONE)
@@ -268,7 +305,10 @@ object OmegaReplay {
                         if (!toField || toP != fromP) given.remove(fromP to c)
                     }
                     if (c != 0L && toField && !fromField && fromL != 0 && fromP != toP) given[toP to c] = fromP
-                    if (toL and LOC_OVERLAY == 0 && (toL == LOC_MZONE || toL == LOC_SZONE) && c != 0L) field[toP] += c to zone(toL)
+                    if (toL and LOC_OVERLAY == 0 && (toL == LOC_MZONE || toL == LOC_SZONE) && c != 0L) {
+                        field[toP] += c to zone(toL)
+                        slots[Triple(toP, toL, toSeq)] = c
+                    }
                     if (c != 0L && turnNo > 0) {
                         see(by(toP, c), c)
                         val p = toP
@@ -279,12 +319,14 @@ object OmegaReplay {
                 }
                 MSG_SUMMONING, MSG_FLIPSUMMONING -> {
                     val c = code(m, 1); val p = u8(m, 5) and 1
+                    resolving?.let { if (by(p, c) == it.who) it.gains = true }
                     see(by(p, c), c)
                     events += Event(by(p, c), if (u8(m, 0) == MSG_SUMMONING) "normal_summon" else "flip_summon", c,
                         onOpponentField = by(p, c) != p)
                 }
                 MSG_SPSUMMONING -> {
                     val c = code(m, 1); val p = u8(m, 5) and 1
+                    resolving?.let { if (by(p, c) == it.who) it.gains = true }
                     see(by(p, c), c)
                     val r = lastMoveReason[c] ?: REASON_SPSUMMON
                     val action = when {
@@ -308,10 +350,41 @@ object OmegaReplay {
                     val onField = u8(m, 6).let { it and LOC_OVERLAY == 0 && (it == LOC_MZONE || it == LOC_SZONE) }
                     val who = if (onField) by(p, c) else p
                     see(who, c)
+                    val answers = links.lastOrNull()?.let { it.who != who } ?: false
                     events += Event(who, "activate", c, chain.lastOrNull() ?: 0, onOpponentField = who != p)
+                    links += Link(events.size - 1, who, answers)
                     chain += c
                 }
-                MSG_CHAIN_END -> chain.clear()
+                MSG_BECOME_TARGET -> {
+                    // the targets of the link just activated
+                    val l = links.lastOrNull()
+                    if (l != null && resolving == null) for (i in 0 until u8(m, 1)) {
+                        val o = 2 + 4 * i
+                        if (o + 3 >= m.size) break
+                        val side = u8(m, o) and 1; val loc = u8(m, o + 1); val seq = u8(m, o + 2)
+                        val c = slots[Triple(side, loc, seq)] ?: 0L
+                        if ((loc == LOC_MZONE || loc == LOC_SZONE) && (if (c != 0L) owner(side, c) else side) != l.who) l.hitsOpponent = true
+                    }
+                }
+                MSG_CHAIN_SOLVING -> resolving = links.getOrNull(u8(m, 1) - 1)
+                MSG_CHAIN_SOLVED -> resolving = null
+                MSG_CHAIN_END -> {
+                    // each link's role, now that its resolution is known
+                    for (l in links) {
+                        val e = events.getOrNull(l.event) ?: continue
+                        val role = when {
+                            l.gains -> "combo"
+                            // answering their link, or acting in their turn without building anything
+                            // (Droll & Lock Bird after a search starts its own chain)
+                            l.answers || l.who != turnPlayer -> "response"
+                            l.hitsOpponent -> "removal"
+                            else -> "combo"
+                        }
+                        if (role != e.role) events[l.event] = e.copy(role = role)
+                    }
+                    links.clear(); resolving = null
+                    chain.clear()
+                }
                 MSG_CONFIRM_CARDS -> {
                     val p = u8(m, 1) and 1
                     for (i in 0 until u8(m, 2)) see(p, code(m, 3 + 8 * i))

@@ -79,6 +79,12 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
     - the opponent's interruptions and what they answered;
     - whether it was played under the opponent's Mulcharmy (Fuwalos, Purulia) or Droll & Lock Bird;
     - how it went: the game's result, how many activations the opponent had next turn, and whether the player lost then. Together these give a performance from 0 to 100.
+  - **Combo or interaction:** every activation in a turn is tagged from what happened in the replay:
+    - **combo:** it builds the player's board (summons, searches, placements, or it only touches their own cards, like Enlisted removing their own Seneschal from the other field);
+    - **response:** it answers the opponent, or acts in the opponent's turn without building anything (Ash, Dominus Impulse, Droll);
+    - **removal:** it hits the opponent's cards and gains nothing.
+
+    An effect that both removes and builds (Enlisted banishing a monster, then moving to the other field so another Angelechy can be summoned) counts as combo. The engine learns only from the combo steps. What a deck uses to stop others is kept separately ("Stops opponents with" in Settings), and match summaries list the answers and removals apart from the combo. Lines in the Play engine and the combo tree mark the engine's own answers to the opponent as "Answer:".
   - **Both players' information:** a replay of a played game keeps both decks and the game as each player saw it, so both opening hands and every draw are known. The app merges the two views.
   - **What the engine learns:**
     - It replays the opening turn of whoever went first (you or the opponent) with that player's exact deck. Verified lines keep their combo pieces, tagged with the Mulcharmy / Droll condition and weighted by performance, and the move policy learns from them.

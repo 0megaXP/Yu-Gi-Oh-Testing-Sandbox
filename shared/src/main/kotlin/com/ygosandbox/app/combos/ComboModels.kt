@@ -9,7 +9,13 @@ import org.json.JSONObject
 import java.io.File
 
 /** One step of a combo read from a video; [code] is null when the card couldn't be identified. */
-data class ComboStep(val t: Double?, val action: String, val code: Long?, val name: String, val detail: String)
+data class ComboStep(
+    val t: Double?, val action: String, val code: Long?, val name: String, val detail: String,
+    /** "combo" (builds the player's board), "response" (answers the opponent) or "removal" (hits their cards). */
+    val role: String = "combo",
+) {
+    val interaction: Boolean get() = role != "combo"
+}
 
 data class BoardCard(val code: Long, val name: String, val where: String) {
     val onField: Boolean get() = listOf("hand", "gy", "grave", "banish", "deck").none { it in where.lowercase() }

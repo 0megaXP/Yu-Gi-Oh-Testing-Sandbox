@@ -38,6 +38,8 @@ data class ReplayTurn(
     val plays: Int,
     /** What the opponent activated during it: the card and the card it answered (0 if none). */
     val interruptions: List<Pair<Long, Long>>,
+    /** What this player used against the opponent in the turn (responses and removals): the card and what it answered (0 if none). */
+    val interactions: List<Pair<Long, Long>> = emptyList(),
     /** The opponent's draw / search punishers active during it: "mulcharmy", "droll". */
     val under: List<String>,
     /** The game's result for this player, null when the replay stops early. */
@@ -140,7 +142,10 @@ class ReplayDbStore {
         .put("turns", JSONArray(db.turns.map { t ->
             JSONObject().put("game", t.game).put("player", t.player).put("archetype", t.archetype).put("turn", t.turn)
                 .put("goingFirst", t.goingFirst).put("hand", JSONArray(t.hand))
-                .put("steps", JSONArray(t.steps.map { s -> JSONObject().put("action", s.action).put("code", s.code ?: 0L).put("name", s.name).put("detail", s.detail) }))
+                .put("steps", JSONArray(t.steps.map { s ->
+                    JSONObject().put("action", s.action).put("code", s.code ?: 0L).put("name", s.name).put("detail", s.detail).put("role", s.role)
+                }))
+                .put("interactions", JSONArray(t.interactions.map { (c, on) -> JSONObject().put("code", c).put("on", on) }))
                 .put("endBoard", JSONArray(t.endBoard.map { b -> JSONObject().put("code", b.code).put("name", b.name).put("where", b.where) }))
                 .put("plays", t.plays)
                 .put("interruptions", JSONArray(t.interruptions.map { (c, on) -> JSONObject().put("code", c).put("on", on) }))
@@ -174,11 +179,13 @@ class ReplayDbStore {
                 game = t.optString("game"), player = t.optInt("player"), archetype = t.optString("archetype"), turn = t.optInt("turn"),
                 goingFirst = t.optBoolean("goingFirst"), hand = t.optJSONArray("hand").longs(),
                 steps = t.optJSONArray("steps").objects().map { s ->
-                    ComboStep(null, s.optString("action"), s.optLong("code").takeIf { it != 0L }, s.optString("name"), s.optString("detail"))
+                    ComboStep(null, s.optString("action"), s.optLong("code").takeIf { it != 0L }, s.optString("name"), s.optString("detail"),
+                        s.optString("role", "combo"))
                 },
                 endBoard = t.optJSONArray("endBoard").objects().map { b -> BoardCard(b.optLong("code"), b.optString("name"), b.optString("where")) },
                 plays = t.optInt("plays"),
                 interruptions = t.optJSONArray("interruptions").objects().map { it.optLong("code") to it.optLong("on") },
+                interactions = t.optJSONArray("interactions").objects().map { it.optLong("code") to it.optLong("on") },
                 under = t.optJSONArray("under").strings(), won = t.boolOrNull("won"),
                 opponentNextPlays = t.intOrNull("opponentNextPlays"), lostNextTurn = t.optBoolean("lostNextTurn"),
                 check = t.optJSONObject("check")?.let { c ->
@@ -201,8 +208,8 @@ class ReplayDbStore {
 // ---------------------------------------------------------------- reading a replay, for every deck
 
 object UniversalReplay {
-    /** 2: both players' views (decks, hands, draws) when the replay has them. */
-    const val VERSION = 2
+    /** 2: both players' views (decks, hands, draws) when the replay has them. 3: steps tagged combo / response / removal. */
+    const val VERSION = 3
 
     /** Mulcharmy cards and Droll & Lock Bird, by name: the opponent's draw / search punishers. */
     fun punisher(name: String): String? = when {
@@ -236,13 +243,18 @@ object UniversalReplay {
                 // with both views, for the other one too
                 hand = if (i == 0 && (p == g.deckOwner || g.fullInfo) && g.openingHands[p].none { it == 0L })
                     g.openingHands[p].map(::c) else emptyList(),
-                steps = mine.map { e -> ComboStep(null, e.action, c(e.code), cn.name(e.code), if (e.onOpponentField) "on the opponent's field" else "") },
+                steps = mine.map { e ->
+                    ComboStep(null, e.action, c(e.code), cn.name(e.code), if (e.onOpponentField) "on the opponent's field" else "", e.role)
+                },
                 endBoard = t.endField[p].map { (code, where) -> BoardCard(c(code), cn.name(code), where) },
-                plays = mine.count { it.action == "activate" },
-                interruptions = theirs.map { c(it.code) to c(it.chainedTo) },
+                // the plays of their combo (not what they used against the opponent)
+                plays = mine.count { it.action == "activate" && it.role == "combo" },
+                // what the opponent did against them (their own plays in this turn aren't interruptions)
+                interruptions = theirs.filter { it.role != "combo" }.map { c(it.code) to c(it.chainedTo) },
+                interactions = mine.filter { it.action == "activate" && it.role != "combo" }.map { c(it.code) to c(it.chainedTo) },
                 under = theirs.mapNotNull { punisher(cn.name(it.code)) }.distinct(),
                 won = g.winner?.let { it == p },
-                opponentNextPlays = next?.events?.count { it.player == next.player && it.action == "activate" },
+                opponentNextPlays = next?.events?.count { it.player == next.player && it.action == "activate" && it.role == "combo" },
                 // the game ended in the opponent's next turn, won by them
                 lostNextTurn = next != null && i + 2 == g.turns.size && g.winner == next.player,
             )
@@ -264,6 +276,8 @@ data class ArchetypeKnowledge(
     val plays: Double,
     /** Their cards the opponents answered most, with how often, and how often the game was lost after. */
     val chokes: List<Choke>,
+    /** What it uses to stop its opponents (responses and removals, on their turns and its own), most used first. */
+    val stopsWith: List<Pair<String, Int>> = emptyList(),
     /** Their best lines: verified first turns and others, by performance. */
     val bestTurns: List<ReplayTurn>,
     /** Turns played under the opponent's Mulcharmy / Droll, and their average performance. */
@@ -300,6 +314,15 @@ object ReplayKnowledge {
             chokeCounts[on] = (n + 1) to (lost + if (t.won == false) 1 else 0)
         }
         val under = turns.filter { it.under.isNotEmpty() }
+        // its interactions: in its own turns, and as interruptions in its opponents' turns
+        val byId = db.games.associateBy { it.id }
+        val stops = HashMap<Long, Int>()
+        for (t in turns) for ((c, _) in t.interactions) stops[c] = (stops[c] ?: 0) + 1
+        for (t in db.turns) {
+            val g = byId[t.game] ?: continue
+            if (g.archetypes.getOrNull(1 - t.player)?.equals(archetype, ignoreCase = true) != true) continue
+            for ((c, _) in t.interruptions) stops[c] = (stops[c] ?: 0) + 1
+        }
         return ArchetypeKnowledge(
             archetype = turns.first().archetype,
             games = games.size,
@@ -309,6 +332,7 @@ object ReplayKnowledge {
             plays = avg(turns.map { it.plays }),
             chokes = chokeCounts.entries.sortedByDescending { it.value.first }
                 .map { (code, v) -> ArchetypeKnowledge.Choke(code, cn.name(code), v.first, v.second) },
+            stopsWith = stops.entries.sortedByDescending { it.value }.map { cn.name(it.key) to it.value },
             bestTurns = turns.filter { it.steps.size >= 3 }.sortedWith(
                 compareByDescending<ReplayTurn> { it.check?.verified == true }.thenByDescending { it.performance }),
             underTurns = under.size,
@@ -383,10 +407,15 @@ object ReplayKnowledge {
                         turns = turns.map { t ->
                             TurnRecord(
                                 turn = t.turn, ours = t.player == side,
-                                summary = t.steps.groupBy { it.action }.entries.joinToString(" · ") { (a, s) ->
+                                // the combo first, then what they used against the opponent
+                                summary = t.steps.filter { !it.interaction }.groupBy { it.action }.entries.joinToString(" · ") { (a, s) ->
                                     a.replace('_', ' ').replaceFirstChar { it.uppercase() } + ": " +
                                         s.joinToString(", ") { it.name + if (it.detail.isNotEmpty()) " (${it.detail})" else "" }
-                                } + if (t.under.isNotEmpty()) " · under " + t.under.joinToString(", ") else "",
+                                } + t.steps.filter { it.role == "response" }.takeIf { it.isNotEmpty() }
+                                    ?.let { s -> " · Answered with: " + s.joinToString(", ") { it.name } }.orEmpty() +
+                                    t.steps.filter { it.role == "removal" }.takeIf { it.isNotEmpty() }
+                                        ?.let { s -> " · Removed with: " + s.joinToString(", ") { it.name } }.orEmpty() +
+                                    if (t.under.isNotEmpty()) " · under " + t.under.joinToString(", ") else "",
                                 plays = t.steps.mapNotNull { it.code }.distinct(),
                                 endBoard = t.endBoard.map { it.code },
                                 interrupts = t.interruptions.map { (c, on) ->
@@ -435,7 +464,8 @@ object ReplayLearning {
                 val fresh = files.filter { (_, b) -> OmegaImport.id(b).let { it !in data.ids || it in outdated } }
                 val again = fresh.map { (_, b) -> OmegaImport.id(b) }.filter { it in outdated }.toSet()
                 // the engine's replays already done for those games are kept
-                val oldChecks = data.turns.filter { it.game in again && it.check != null }.associateBy({ "${it.key}/${it.player}" }, { it.check })
+                fun comboSig(t: ReplayTurn) = t.steps.filter { !it.interaction }.map { it.action to it.code }
+                val oldTurns = data.turns.filter { it.game in again && it.check != null }.associateBy { "${it.key}/${it.player}" }
                 val games = ArrayList(data.games.filter { it.id !in again })
                 val turns = ArrayList(data.turns.filter { it.game !in again })
                 val unreadable = ArrayList(data.unreadable)
@@ -445,7 +475,11 @@ object ReplayLearning {
                     val r = UniversalReplay.read(name, bytes, cn, handTraps)
                     if (r == null) { unreadable += OmegaImport.id(bytes); return@forEachIndexed }
                     games += r.first
-                    turns += r.second.map { t -> oldChecks["${t.key}/${t.player}"]?.let { t.copy(check = it) } ?: t }
+                    // an earlier engine replay is kept when the combo it replayed is still the same
+                    turns += r.second.map { t ->
+                        oldTurns["${t.key}/${t.player}"]?.takeIf { comboSig(it) == comboSig(t) }
+                            ?.let { t.copy(check = it.check, choices = it.choices, explained = it.explained) } ?: t
+                    }
                     if (r.first.id !in again) added++
                     // saved as it goes: closing the app keeps what was read
                     if (added % 10 == 0) save(ReplayDatabase(games, turns, unreadable))
@@ -472,7 +506,9 @@ object ReplayLearning {
                     )
                     val input = VideoLineInput(
                         id = t.key, hand = t.hand,
-                        steps = t.steps.map { VideoStepInput(it.action, it.code ?: 0L, it.detail) },
+                        // the combo only: answers to the opponent and removals of their cards aren't
+                        // part of it (and can't be played when the engine replays the line alone)
+                        steps = t.steps.filter { !it.interaction }.map { VideoStepInput(it.action, it.code ?: 0L, it.detail) },
                         endBoard = t.endBoard.filter { it.onField }.map { it.code },
                         under = t.under,
                     )

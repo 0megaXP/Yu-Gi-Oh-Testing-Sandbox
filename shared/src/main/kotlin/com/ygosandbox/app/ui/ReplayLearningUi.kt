@@ -156,12 +156,16 @@ fun KnowledgeSummary(k: ArchetypeKnowledge) {
                 "Stopped most on: " + k.chokes.take(4).joinToString(", ") { "${it.name} (${it.times}×" + (if (it.lostAfter > 0) ", lost ${it.lostAfter}" else "") + ")" },
                 style = MaterialTheme.typography.bodySmall,
             )
+            if (k.stopsWith.isNotEmpty()) Text(
+                "Stops opponents with: " + k.stopsWith.take(4).joinToString(", ") { "${it.first} (${it.second}×)" },
+                style = MaterialTheme.typography.bodySmall,
+            )
             if (k.underTurns > 0) Text("Under Mulcharmy / Droll: ${k.underTurns} turn${if (k.underTurns == 1) "" else "s"}, " +
                 "performance ${(k.underPerformance * 100).toInt()}/100", style = MaterialTheme.typography.bodySmall)
             k.bestTurns.firstOrNull()?.let { t ->
                 Text("Best line (${if (t.goingFirst) "going first" else "going second"}, turn ${t.turn}, performance ${(t.performance * 100).toInt()}/100" +
                     (if (t.check?.verified == true) ", verified" else "") + "): " +
-                    t.steps.filter { it.action == "activate" || it.action.endsWith("summon") }.take(8).joinToString(" → ") { it.name },
+                    t.steps.filter { !it.interaction && (it.action == "activate" || it.action.endsWith("summon")) }.take(8).joinToString(" → ") { it.name },
                     style = MaterialTheme.typography.bodySmall, maxLines = 3)
             }
             if (k.turnsChecked > 0) Text("Engine: ${k.turnsVerified} of ${k.turnsChecked} first turns verified and learned",

@@ -203,8 +203,19 @@ private fun LevelPicker(who: String, level: BotLevel, onPick: (BotLevel) -> Unit
 
 // ---------------- Board ----------------
 
+/**
+ * The duel board. The replay viewer uses it too, with its own [title], header [actions] and
+ * [controls] in place of the duel's decisions.
+ */
 @Composable
-private fun DuelBoardScreen(d: DuelUi, vm: AppViewModel, onOpen: (List<Long>, Int) -> Unit) {
+internal fun DuelBoardScreen(
+    d: DuelUi,
+    vm: AppViewModel,
+    onOpen: (List<Long>, Int) -> Unit,
+    title: String? = null,
+    actions: (@Composable () -> Unit)? = null,
+    controls: (@Composable (DuelState) -> Unit)? = null,
+) {
     val s = d.state
     val top = 1 - d.bottom
     val reveal = d.human < 0 && d.setup.reveal
@@ -219,14 +230,15 @@ private fun DuelBoardScreen(d: DuelUi, vm: AppViewModel, onOpen: (List<Long>, In
     val wide = maxWidth >= 1000.dp && maxHeight >= 560.dp
     val bigWindow = maxWidth >= 1400.dp
     Column(Modifier.fillMaxSize()) {
-        Header(if (s == null) "Duel" else "Turn ${s.turn} · ${s.phase}", onBack = { vm.back() }) {
-            if (d.human < 0 || s?.decision?.player != d.human) {
+        Header(title ?: if (s == null) "Duel" else "Turn ${s.turn} · ${s.phase}", onBack = { vm.back() }) {
+            if (actions != null) actions()
+            else if (d.human < 0 || s?.decision?.player != d.human) {
                 IconButton(onClick = { vm.pauseDuel(!d.paused) }) {
                     Icon(if (d.paused) Icons.Default.PlayArrow else Icons.Default.Pause, if (d.paused) "Resume" else "Pause")
                 }
                 if (d.paused) IconButton(onClick = { vm.stepDuel() }) { Icon(Icons.Default.SkipNext, "One bot move") }
             }
-            IconButton(onClick = { vm.stopDuel() }) { Icon(Icons.Default.Stop, "End duel") }
+            if (actions == null) IconButton(onClick = { vm.stopDuel() }) { Icon(Icons.Default.Stop, "End duel") }
         }
         if (s == null) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -263,7 +275,7 @@ private fun DuelBoardScreen(d: DuelUi, vm: AppViewModel, onOpen: (List<Long>, In
                     LogPanel(d.log, d.names, colors, open = true, onToggle = {}, fill = true, modifier = Modifier.weight(1f))
                     Spacer(Modifier.height(8.dp))
                     Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, tonalElevation = 3.dp, shape = RoundedCornerShape(12.dp)) {
-                        BottomPanel(d, s, vm)
+                        if (controls != null) Column(Modifier.fillMaxWidth().padding(12.dp)) { controls(s) } else BottomPanel(d, s, vm)
                     }
                 }
             }
@@ -275,7 +287,9 @@ private fun DuelBoardScreen(d: DuelUi, vm: AppViewModel, onOpen: (List<Long>, In
             }
 
             // Bottom panel: game over, the person's decision, or what the bot is doing.
-            Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, tonalElevation = 3.dp) { BottomPanel(d, s, vm) }
+            Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, tonalElevation = 3.dp) {
+                if (controls != null) Column(Modifier.fillMaxWidth().padding(12.dp)) { controls(s) } else BottomPanel(d, s, vm)
+            }
         }
     }
     // Cards flying between zones, drawn above the board.

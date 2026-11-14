@@ -37,6 +37,8 @@ data class HistoryGame(
     val myHand: List<Long>,
     /** Cards the opponent played or revealed. */
     val theirCards: List<Long>,
+    /** The replay's file name in the replay folder (to watch it), "" when not known yet. */
+    val file: String = "",
 ) {
     val won: Boolean? get() = winner?.let { it == me }
     val wentFirst: Boolean get() = first == me
@@ -129,9 +131,17 @@ object MatchHistory {
         return out
     }
 
-    /** Reads the replays not read yet ([files]: name to contents). */
+    /**
+     * Reads the replays of [files] (name to contents, the whole folder) not read yet, and notes
+     * the file names of games read before they were kept.
+     */
     fun refresh(files: List<Pair<String, ByteArray>>, db: CardDatabase) {
         if (_state.value.running) return
+        val names = files.associate { (n, b) -> OmegaImport.id(b) to n }
+        data().let { d ->
+            if (d.games.any { it.file.isEmpty() && it.id in names })
+                save(Data(d.games.map { g -> if (g.file.isEmpty()) names[g.id]?.let { g.copy(file = it) } ?: g else g }, d.unreadable))
+        }
         _state.update { it.copy(running = true, note = null, progress = "Reading replays") }
         BackgroundWork.launch("matchhistory", "Reading the match history") {
             var added = 0
@@ -178,10 +188,23 @@ object MatchHistory {
             winner = g.winner,
             winReason = g.winReason,
             turns = g.turns.size,
+            file = name,
             myHand = g.openingHands.getOrNull(me).orEmpty().map(cn::canonical),
             theirCards = g.seen.getOrNull(1 - me).orEmpty().map(cn::canonical).distinct().take(40),
         )
     }
+
+    /** The replay of [game] from the replay folder, or null when it isn't there any more. */
+    suspend fun bytesOf(game: HistoryGame): ByteArray? {
+        val platform = AppPlatform.current
+        val folder = platform.preferences("replays").getString("omega_folder", null) ?: platform.omegaReplays?.path ?: return null
+        val named = if (game.file.isNotEmpty()) platform.readFolder(folder, ".bytes") { n, _ -> n == game.file } else emptyList()
+        named.firstOrNull { OmegaImport.id(it.second) == game.id }?.let { return it.second }
+        // renamed or moved: look through the whole folder
+        return platform.readFolder(folder, ".bytes") { _, _ -> true }.firstOrNull { OmegaImport.id(it.second) == game.id }?.second
+    }
+
+    fun game(id: String): HistoryGame? = games().firstOrNull { it.id == id }
 
     // ---------------------------------------------------------------- file
 
@@ -203,7 +226,7 @@ object MatchHistory {
             JSONObject().put("id", g.id).put("savedAt", g.savedAt).put("players", JSONArray(g.players)).put("me", g.me)
                 .put("archetypes", JSONArray(g.archetypes)).put("first", g.first).put("winner", g.winner ?: JSONObject.NULL)
                 .put("winReason", g.winReason).put("turns", g.turns)
-                .put("myHand", JSONArray(g.myHand)).put("theirCards", JSONArray(g.theirCards))
+                .put("myHand", JSONArray(g.myHand)).put("theirCards", JSONArray(g.theirCards)).put("file", g.file)
         }))
 
     private fun decode(o: JSONObject): Data {
@@ -215,6 +238,7 @@ object MatchHistory {
                 me = g.optInt("me"), archetypes = g.optJSONArray("archetypes").strings(), first = g.optInt("first"),
                 winner = if (g.isNull("winner")) null else g.optInt("winner"), winReason = g.optInt("winReason"),
                 turns = g.optInt("turns"), myHand = g.optJSONArray("myHand").longs(), theirCards = g.optJSONArray("theirCards").longs(),
+                file = g.optString("file"),
             )
         }
         return Data(games, o.optJSONArray("unreadable").strings())

@@ -95,6 +95,23 @@ object OmegaReplay {
         )
     }
 
+    /** A replay's duel messages from the saving player's view, with both decks when kept (replay viewer). */
+    data class Raw(val messages: List<ByteArray>, val owner: Int, val decks: List<Pair<List<Long>, List<Long>>?>)
+
+    fun raw(bytes: ByteArray): Raw {
+        val doc = try {
+            Bson.read(inflate(bytes))
+        } catch (e: Exception) {
+            throw NotAReplay("Not a YGO Omega replay file")
+        }
+        @Suppress("UNCHECKED_CAST")
+        val msgs = (doc["GameMessages"] as? List<Any?>)?.filterIsInstance<ByteArray>()
+            ?: throw NotAReplay("Not a YGO Omega replay file (no duel messages)")
+        val decks = (0..1).map { p -> (doc["Deck$p"] as? String)?.let { runCatching { deckCode(it) }.getOrNull() } }
+        val owner = viewer(msgs) ?: doc.keys.firstOrNull { it.startsWith("Deck") }?.removePrefix("Deck")?.toIntOrNull() ?: 0
+        return Raw(msgs, owner and 1, decks)
+    }
+
     /** The player whose draws a message stream names (its viewer), or null when it can't tell. */
     private fun viewer(msgs: List<ByteArray>): Int? {
         val known = intArrayOf(0, 0)

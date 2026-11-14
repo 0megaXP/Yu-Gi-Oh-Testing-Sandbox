@@ -62,6 +62,8 @@ sealed interface Screen {
     data object ComboTree : Screen
     /** Your YGO Omega matches (Best of 3), from the replay folder. */
     data object MatchHistory : Screen
+    /** One game of the match history, replayed move by move. */
+    data class ReplayViewer(val gameId: String) : Screen
     data object Settings : Screen
 }
 

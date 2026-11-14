@@ -3,6 +3,12 @@
 package com.ygosandbox.app.ui
 
 import androidx.compose.foundation.clickable
+import com.ygosandbox.app.Screen
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -19,7 +25,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -80,6 +85,7 @@ fun MatchHistoryScreen(ui: UiState, vm: AppViewModel) {
     var looking by remember { mutableStateOf(false) }
     val state by MatchHistory.state.collectAsState()
     var myDeck by rememberSaveable { mutableStateOf<String?>(null) }
+    var theirDeck by rememberSaveable { mutableStateOf<String?>(null) }
     val open = remember { mutableStateListOf<Long>() }
 
     fun refresh() = readFolder(scope, folder, vm, onLooking = { looking = it }, onNote = { note = it })
@@ -93,7 +99,9 @@ fun MatchHistoryScreen(ui: UiState, vm: AppViewModel) {
     }
 
     val all = remember(state.revision) { MatchHistory.matches() }
-    val matches = remember(all, myDeck) { if (myDeck == null) all else all.filter { it.myDeck == myDeck } }
+    val matches = remember(all, myDeck, theirDeck) {
+        all.filter { (myDeck == null || it.myDeck == myDeck) && (theirDeck == null || it.theirDeck == theirDeck) }
+    }
 
     Column(Modifier.fillMaxSize()) {
         Header("Match history", onBack = { vm.back() }) {
@@ -140,10 +148,15 @@ fun MatchHistoryScreen(ui: UiState, vm: AppViewModel) {
                 }
             }
             if (all.isNotEmpty()) {
-                item { DeckFilter(all, myDeck) { myDeck = it } }
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ArchetypeMenu("Your deck", all.map { it.myDeck }, myDeck, Modifier.weight(1f)) { myDeck = it }
+                        ArchetypeMenu("Against", all.map { it.theirDeck }, theirDeck, Modifier.weight(1f)) { theirDeck = it }
+                    }
+                }
                 item { Summary(matches) }
             }
-            if (matches.isEmpty() && all.isNotEmpty()) item { Text("No matches with that deck.") }
+            if (matches.isEmpty() && all.isNotEmpty()) item { Text("No matches with those archetypes.") }
             items(matches, key = { it.games.first().id }) { m ->
                 val key = m.start
                 MatchCard(vm, m, expanded = key in open) { if (key in open) open.remove(key) else open.add(key) }
@@ -161,22 +174,32 @@ private fun readFolder(scope: CoroutineScope, folder: String, vm: AppViewModel, 
         val files = runCatching { AppPlatform.current.readFolder(folder, ".bytes") { _, _ -> true } }
         onLooking(false)
         files.onSuccess { fs ->
-            val fresh = fs.filter { (_, b) -> com.ygosandbox.app.combos.OmegaImport.id(b) !in known }
-            if (fresh.isEmpty()) onNote(if (fs.isEmpty()) "No YGO Omega replays in that folder." else "No new games.")
-            else MatchHistory.refresh(fresh, vm.db)
+            val fresh = fs.count { (_, b) -> com.ygosandbox.app.combos.OmegaImport.id(b) !in known }
+            if (fresh == 0) onNote(if (fs.isEmpty()) "No YGO Omega replays in that folder." else "No new games.")
+            // all the files: games read before file names were kept get theirs (to watch them)
+            if (fs.isNotEmpty()) MatchHistory.refresh(fs, vm.db)
         }.onFailure { e -> onNote("Couldn't read the folder: ${e.message ?: e.javaClass.simpleName}") }
     }
 }
 
-/** Your decks (by archetype), to see one deck's matches. */
+/** Picks one archetype (or any) from those in the history, most played first. */
 @Composable
-private fun DeckFilter(all: List<HistoryMatch>, selected: String?, onSelect: (String?) -> Unit) {
-    val decks = remember(all) { all.groupingBy { it.myDeck }.eachCount().entries.sortedByDescending { it.value } }
-    if (decks.size < 2) return
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        FilterChip(selected = selected == null, onClick = { onSelect(null) }, label = { Text("All decks") })
-        decks.forEach { (d, n) ->
-            FilterChip(selected = selected == d, onClick = { onSelect(if (selected == d) null else d) }, label = { Text("${deckLabel(d)} · $n") })
+private fun ArchetypeMenu(label: String, archetypes: List<String>, selected: String?, modifier: Modifier, onSelect: (String?) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    val options = remember(archetypes) { archetypes.groupingBy { it }.eachCount().entries.sortedByDescending { it.value } }
+    Box(modifier) {
+        OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.weight(1f)) {
+                Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(selected?.let(::deckLabel) ?: "Any archetype", maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(text = { Text("Any archetype") }, onClick = { onSelect(null); open = false })
+            options.forEach { (a, n) ->
+                DropdownMenuItem(text = { Text("${deckLabel(a)} · $n") }, onClick = { onSelect(a); open = false })
+            }
         }
     }
 }
@@ -273,6 +296,7 @@ private fun GameDetail(vm: AppViewModel, number: Int, g: HistoryGame) {
                 g.myHand.forEach { CardThumbnail(vm, it, width = 40) }
             }
         }
+        OutlinedButton(onClick = { vm.open(Screen.ReplayViewer(g.id)) }) { Text("Watch replay") }
         val theirs = g.theirCards.mapNotNull { vm.db.find(it)?.name }.distinct()
         if (theirs.isNotEmpty()) Text(
             "The opponent played: " + theirs.take(12).joinToString(", ") + if (theirs.size > 12) "…" else "",

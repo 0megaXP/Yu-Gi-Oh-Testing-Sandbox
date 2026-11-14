@@ -251,7 +251,7 @@ internal fun DuelBoardScreen(
 
         val board: @Composable (slot: Dp, hand: Int) -> Unit = { slot, hand ->
             PlayerBar(d.names[top], s.players[top], colors.of(top), active = s.turnPlayer == top)
-            HandRow(vm, s.players[top].hand, top, spots, pending, faceUp = reveal, onOpen, hand)
+            HandRow(vm, s.players[top].hand, top, spots, pending, faceUp = reveal, onOpen, hand, upsideDown = true)
             Spacer(Modifier.height(4.dp))
             Mat(vm, s, d.bottom, spots, pending, reveal, onOpen, onPile = { t, l -> pile = t to l }, names = d.names, maxSlot = slot)
             Spacer(Modifier.height(4.dp))
@@ -365,6 +365,8 @@ private fun HandRow(
     faceUp: Boolean,
     onOpen: (List<Long>, Int) -> Unit,
     cardWidth: Int = 42,
+    /** The top player's cards face their own side of the table. */
+    upsideDown: Boolean = false,
 ) {
     LazyRow(
         modifier = Modifier.fillMaxWidth().heightIn(min = (cardWidth / 0.686f + 4).dp).then(spots.at("hand/$player")),
@@ -374,7 +376,7 @@ private fun HandRow(
         itemsIndexed(hand) { i, c ->
             val key = "hc/$player/$i"
             // A card still flying into the hand keeps its space but isn't drawn yet.
-            Box(spots.at(key).graphicsLayer { alpha = if (pending.has(key)) 0f else 1f }) {
+            Box(spots.at(key).graphicsLayer { alpha = if (pending.has(key)) 0f else 1f; rotationZ = if (upsideDown) 180f else 0f }) {
                 if (faceUp) CardThumbnail(vm, c.code, width = cardWidth) { onOpen(hand.map { it.code }, i) }
                 else CardBack(cardWidth.dp)
             }
@@ -415,7 +417,7 @@ private fun Mat(
         val gap = MAT_GAP
         val slot = ((maxWidth - gap * 6) / 7).coerceAtMost(maxSlot)
         spots.slotWidth = slot
-        val ctx = MatCtx(vm, s, spots, pending, reveal, slot, onOpen, onPile, names)
+        val ctx = MatCtx(vm, s, spots, pending, reveal, slot, onOpen, onPile, names, bottom)
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(gap), horizontalAlignment = Alignment.CenterHorizontally) {
             // Top player, seen from across the table.
             MatRow(gap) {
@@ -473,6 +475,8 @@ private class MatCtx(
     val onOpen: (List<Long>, Int) -> Unit,
     val onPile: (String, List<DuelCard>) -> Unit,
     val names: List<String>,
+    /** The player at the bottom; the other one's cards are turned to face their side. */
+    val bottom: Int,
 ) {
     fun card(player: Int, kind: Char, seq: Int): ZoneCard? {
         val p = s.players[player]
@@ -485,7 +489,7 @@ private class MatCtx(
     fun Zone(player: Int, kind: Char, seq: Int, label: String? = null, faceUpOnly: Boolean = true) {
         val key = "$kind/$player/$seq"
         val c = if (pending.has(key)) null else card(player, kind, seq)
-        ZoneSlot(vm, c, slot, reveal, label, spots.at(key), onOpen)
+        ZoneSlot(vm, c, slot, reveal, label, spots.at(key), onOpen, upsideDown = player != bottom)
     }
 
     @Composable
@@ -495,11 +499,12 @@ private class MatCtx(
         val mine = if (left) 5 else 6
         val theirs = if (left) 6 else 5
         val keys = arrayOf("m/$bottom/$mine", "m/$top/$theirs")
+        val mineCard = s.players[bottom].monsters.getOrNull(mine)
         val c = when {
             keys.any { pending.has(it) } -> null
-            else -> s.players[bottom].monsters.getOrNull(mine) ?: s.players[top].monsters.getOrNull(theirs)
+            else -> mineCard ?: s.players[top].monsters.getOrNull(theirs)
         }
-        ZoneSlot(vm, c, slot, reveal, "EMZ", spots.at(*keys), onOpen)
+        ZoneSlot(vm, c, slot, reveal, "EMZ", spots.at(*keys), onOpen, upsideDown = c != null && mineCard == null)
     }
 
     @Composable
@@ -531,7 +536,8 @@ private class MatCtx(
                         ?: "https://images.ygoprodeck.com/images/cards_small/${topCard.code}.jpg",
                     contentDescription = topCard.name,
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier.width(slot - 8.dp).aspectRatio(0.686f).clip(RoundedCornerShape(2.dp)),
+                    modifier = Modifier.width(slot - 8.dp).aspectRatio(0.686f).clip(RoundedCornerShape(2.dp))
+                        .rotate(if (player != this@MatCtx.bottom) 180f else 0f),
                 )
                 else -> CardBack(slot - 8.dp)
             }
@@ -565,6 +571,8 @@ private fun ZoneSlot(
     label: String?,
     spot: Modifier,
     onOpen: (List<Long>, Int) -> Unit,
+    /** The top player's card: turned to face their side of the table (like a real duel). */
+    upsideDown: Boolean = false,
 ) {
     Box(
         spot.width(slot).aspectRatio(0.73f)
@@ -577,7 +585,7 @@ private fun ZoneSlot(
         }
         val defense = c.isMonster && c.position != "atk"
         val canSee = !c.faceDown || reveal
-        Box(Modifier.rotate(if (defense) 90f else 0f).padding(2.dp)) {
+        Box(Modifier.rotate((if (defense) 90f else 0f) + (if (upsideDown) 180f else 0f)).padding(2.dp)) {
             if (canSee) {
                 AsyncImage(
                     model = vm.db.find(c.code)?.imageUrl(small = true) ?: "https://images.ygoprodeck.com/images/cards_small/${c.code}.jpg",

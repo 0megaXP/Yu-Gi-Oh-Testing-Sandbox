@@ -101,6 +101,7 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
   - Pick your deck and the opponent's deck from My decks or any tournament list saved by an Archetype search.
   - Choose going first or second, your 5-card hand (pick or random) and a search depth.
   - **Practice** sees both hands; leave theirs empty for a random one per sample. **Real play** knows only your hand and samples theirs from their list.
+  - Cards that can only be used from the hand while you control no cards (Mulcharmy Fuwalos and Purulia) count as dead once you have a board: the engine uses them to pay discard or "shuffle from your hand" costs, and the side plan rates them lower going first.
   - The engine plays the real card rules (ygopro-core with the EDOPro scripts). It shows the top lines with their steps, the end board, what that board can stop against this opponent, and the opponent's strongest reply found when they play their turn against it.
   - Searches can be stopped early and keep what they found. Cards EDOPro can't play yet are listed.
 - **Combo tree** (test): on the Play engine screen, *Combo tree vs hand traps*.

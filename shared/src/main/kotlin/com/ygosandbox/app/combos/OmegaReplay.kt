@@ -239,7 +239,6 @@ object OmegaReplay {
         var resolving: Link? = null
         // field slots (side, location, sequence) -> card, to name a chain link's targets
         val slots = HashMap<Triple<Int, Int, Int>, Long>()
-        fun owner(side: Int, c: Long) = given[side to c] ?: side
         // the summon type of a card being Special Summoned, from the move that put it on the field
         val lastMoveReason = HashMap<Long, Long>()
         // Set cards come with no code; the move just before names the card for its owner
@@ -250,6 +249,8 @@ object OmegaReplay {
         val given = HashMap<Pair<Int, Long>, Int>()
         // Who an event belongs to: the player who put the card on this field, else the one acting.
         fun by(p: Int, c: Long) = given[p to c] ?: p
+        // Who owns a card on a field side: the player who put it there, else that side.
+        fun owner(side: Int, c: Long) = given[side to c] ?: side
 
         fun zone(loc: Int) = if (loc and 0x7f == LOC_MZONE) "Monster Zone" else "Spell & Trap Zone"
         fun snapshot() = field.map { it.toList() }

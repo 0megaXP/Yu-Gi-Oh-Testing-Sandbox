@@ -134,9 +134,10 @@ jobs:
           cp engine-windows/ygoe_jni.dll desktop/resources/windows/
           mkdir -p desktop/resources/common
           cp -r engine-windows/ygoe desktop/resources/common/ygoe
-          YGO_TOUR="$PWD/screens/windows" YGO_TOUR_SIZE=1100x880 YGO_TOUR_DECKS="$PWD/engine/decks" YGO_TOUR_DUEL_SHOTS=12 \
+          YGO_TOUR="$PWD/screens/windows" YGO_TOUR_SIZE=1100x880 YGO_TOUR_DECKS="$PWD/engine/decks" YGO_TOUR_DUEL_SHOTS=12 YGO_TOUR_LEVEL=STRONG \
             timeout 1800 ./gradlew :desktop:run --no-daemon || echo "app exit code $?"
           for f in desktop/hs_err*.log; do [ -f "$f" ] && { cp "$f" screens/; head -60 "$f"; }; done
+          cat "$APPDATA/YGO Sandbox/crash/session.log" 2>/dev/null | tail -40 || true
           ls -R screens
 
       - name: Push the screenshots to screens-out-windows

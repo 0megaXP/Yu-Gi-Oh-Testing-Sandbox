@@ -41,6 +41,12 @@ object OmegaReplay {
          * Seneschal on their field, each player can Special Summon a Fairy Synchro), part of the combo's story.
          */
         val role: String = "combo",
+        /**
+         * Where the card went or was activated, when the log says: "mzone:2", "szone:0" (the zone's
+         * sequence as its controller numbers it), with ":other" when that is the other player's
+         * field (Seneschal summoned there by Opposition). Empty otherwise.
+         */
+        val zone: String = "",
     )
 
     data class Turn(
@@ -218,6 +224,14 @@ object OmegaReplay {
         if (o + 4 > m.size) 0 else ByteBuffer.wrap(m, o, 4).order(ByteOrder.LITTLE_ENDIAN).int.toLong() and 0xffffffffL
     private fun u8(m: ByteArray, o: Int): Int = if (o < m.size) m[o].toInt() and 0xff else 0
     private fun code(m: ByteArray, o: Int): Long = u32(m, o) and 0x7fffffffL
+    /** The zone in a message's location after the card code (controller, location, sequence: bytes 5, 6, 7). */
+    private fun zoneOf(m: ByteArray, other: Boolean): String {
+        val loc = u8(m, 6)
+        if (loc and LOC_OVERLAY != 0 || (loc != LOC_MZONE && loc != LOC_SZONE)) return ""
+        val seq = u8(m, 7)  // YGO Omega packs locations in 4 bytes: controller, location, sequence, position
+        if (seq < 0 || seq > 6) return ""
+        return (if (loc == LOC_MZONE) "mzone:" else "szone:") + seq + (if (other) ":other" else "")
+    }
 
     private fun messages(msgs: List<ByteArray>, deck: Pair<List<Long>, List<Long>>?, owner: Int): Game {
         val turns = ArrayList<Turn>()
@@ -322,10 +336,11 @@ object OmegaReplay {
                 }
                 MSG_SUMMONING, MSG_FLIPSUMMONING -> {
                     val c = code(m, 1); val p = u8(m, 5) and 1
+                    val zone = zoneOf(m, by(p, c) != p)
                     resolving?.let { if (by(p, c) == it.who) it.gains = true }
                     see(by(p, c), c)
                     events += Event(by(p, c), if (u8(m, 0) == MSG_SUMMONING) "normal_summon" else "flip_summon", c,
-                        onOpponentField = by(p, c) != p)
+                        onOpponentField = by(p, c) != p, zone = zone)
                 }
                 MSG_SPSUMMONING -> {
                     val c = code(m, 1); val p = u8(m, 5) and 1
@@ -342,12 +357,13 @@ object OmegaReplay {
                     }
                     // the other player summoning while the turn player's own effect resolves
                     val inside = resolving?.let { it.who == turnPlayer && by(p, c) != turnPlayer } == true
-                    events += Event(by(p, c), action, c, onOpponentField = by(p, c) != p, role = if (inside) "opponent" else "combo")
+                    events += Event(by(p, c), action, c, onOpponentField = by(p, c) != p, role = if (inside) "opponent" else "combo",
+                        zone = zoneOf(m, by(p, c) != p))
                 }
                 MSG_SET -> {
                     val p = u8(m, 5) and 1
                     val c = code(m, 1).takeIf { it != 0L } ?: lastToSZone[p]
-                    if (c != 0L) { see(by(p, c), c); events += Event(by(p, c), "set", c, onOpponentField = by(p, c) != p) }
+                    if (c != 0L) { see(by(p, c), c); events += Event(by(p, c), "set", c, onOpponentField = by(p, c) != p, zone = zoneOf(m, by(p, c) != p)) }
                 }
                 MSG_CHAINING -> {
                     val c = code(m, 1); val p = u8(m, 5) and 1
@@ -356,7 +372,8 @@ object OmegaReplay {
                     val who = if (onField) by(p, c) else p
                     see(who, c)
                     val answers = links.lastOrNull()?.let { it.who != who } ?: false
-                    events += Event(who, "activate", c, chain.lastOrNull() ?: 0, onOpponentField = who != p)
+                    events += Event(who, "activate", c, chain.lastOrNull() ?: 0, onOpponentField = who != p,
+                        zone = if (onField) zoneOf(m, who != p) else "")
                     links += Link(events.size - 1, who, answers)
                     chain += c
                 }

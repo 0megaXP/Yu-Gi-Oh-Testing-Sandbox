@@ -144,6 +144,7 @@ class ReplayDbStore {
                 .put("goingFirst", t.goingFirst).put("hand", JSONArray(t.hand))
                 .put("steps", JSONArray(t.steps.map { s ->
                     JSONObject().put("action", s.action).put("code", s.code ?: 0L).put("name", s.name).put("detail", s.detail).put("role", s.role)
+                        .also { if (s.zone.isNotEmpty()) it.put("zone", s.zone) }
                 }))
                 .put("interactions", JSONArray(t.interactions.map { (c, on) -> JSONObject().put("code", c).put("on", on) }))
                 .put("endBoard", JSONArray(t.endBoard.map { b -> JSONObject().put("code", b.code).put("name", b.name).put("where", b.where) }))
@@ -180,7 +181,7 @@ class ReplayDbStore {
                 goingFirst = t.optBoolean("goingFirst"), hand = t.optJSONArray("hand").longs(),
                 steps = t.optJSONArray("steps").objects().map { s ->
                     ComboStep(null, s.optString("action"), s.optLong("code").takeIf { it != 0L }, s.optString("name"), s.optString("detail"),
-                        s.optString("role", "combo"))
+                        s.optString("role", "combo"), s.optString("zone", ""))
                 },
                 endBoard = t.optJSONArray("endBoard").objects().map { b -> BoardCard(b.optLong("code"), b.optString("name"), b.optString("where")) },
                 plays = t.optInt("plays"),
@@ -211,10 +212,11 @@ object UniversalReplay {
     /**
      * 2: both players' views (decks, hands, draws) when the replay has them. 3: steps tagged combo / response /
      * removal. 4: the opponent's summons inside the player's effects; removals sent to the engine as optional.
+     * 5: the zone each card went to.
      */
-    const val VERSION = 4
+    const val VERSION = 5
     /** Engine replays of first turns made by games read before this version are done again (the replaying changed). */
-    const val CHECK_SINCE = 4
+    const val CHECK_SINCE = 5
 
     /** Mulcharmy cards and Droll & Lock Bird, by name: the opponent's draw / search punishers. */
     fun punisher(name: String): String? = when {
@@ -250,7 +252,7 @@ object UniversalReplay {
                     g.openingHands[p].map(::c) else emptyList(),
                 // the player's events, and the opponent's summons inside the player's own effects
                 steps = t.events.filter { it.player == p || it.role == "opponent" }.map { e ->
-                    ComboStep(null, e.action, c(e.code), cn.name(e.code), if (e.onOpponentField) "on the opponent's field" else "", e.role)
+                    ComboStep(null, e.action, c(e.code), cn.name(e.code), if (e.onOpponentField) "on the opponent's field" else "", e.role, e.zone)
                 },
                 endBoard = t.endField[p].map { (code, where) -> BoardCard(c(code), cn.name(code), where) },
                 // the plays of their combo (not what they used against the opponent)
@@ -521,7 +523,8 @@ object ReplayLearning {
                         // Enlisted banishing a monster also sets up the next summon) and the opponent's
                         // summons inside the combo's effects as theirs; answers to the opponent aren't part of it
                         steps = t.steps.filter { it.role != "response" }.map {
-                            VideoStepInput(it.action, it.code ?: 0L, it.detail, optional = it.role == "removal", byOpponent = it.role == "opponent")
+                            VideoStepInput(it.action, it.code ?: 0L, it.detail, optional = it.role == "removal", byOpponent = it.role == "opponent",
+                                zone = it.zone)
                         },
                         endBoard = t.endBoard.filter { it.onField }.map { it.code },
                         under = t.under,

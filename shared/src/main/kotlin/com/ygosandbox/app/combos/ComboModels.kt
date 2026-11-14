@@ -16,6 +16,8 @@ data class ComboStep(
      * or "opponent" (the opponent summoning inside one of the player's effects, e.g. with Angelechy Seneschal).
      */
     val role: String = "combo",
+    /** Where the card went in the replay ("mzone:2", "szone:0", ":other" for the other field); empty if unknown. */
+    val zone: String = "",
 ) {
     val interaction: Boolean get() = role != "combo"
 }

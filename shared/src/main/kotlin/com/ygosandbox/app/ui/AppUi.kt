@@ -22,6 +22,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Psychology
@@ -98,6 +99,7 @@ fun SandboxApp(vm: AppViewModel) {
                     is Screen.Reference -> ReferenceScreen(ui, vm, s.deckKey)
                     Screen.ComboTree -> ComboTreeScreen(ui, vm)
                     Screen.Settings -> SettingsScreen(ui, vm)
+                    Screen.MatchHistory -> MatchHistoryScreen(ui, vm)
                 }
                 }
                 }
@@ -172,6 +174,11 @@ private fun MainMenu(ui: UiState, vm: AppViewModel) {
                 badge = { TestBadge() },
                 modifier = m,
             ) { vm.open(Screen.Duel) } },
+            { m -> MenuTile(
+                Icons.Default.History, "Match history",
+                "Your YGO Omega matches from the replay folder, Best of 3, with your record",
+                modifier = m,
+            ) { vm.open(Screen.MatchHistory) } },
             { m -> MenuTile(
                 Icons.Default.Style, "Card database",
                 if (ui.cardCount > 0) "Browse ${ui.cardCount} cards and archetypes" else "Available once downloaded",

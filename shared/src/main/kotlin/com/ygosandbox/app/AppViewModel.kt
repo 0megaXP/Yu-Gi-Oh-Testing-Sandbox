@@ -60,6 +60,8 @@ sealed interface Screen {
     /** Reference end boards for a deck choice key ("my:<id>" or "src:<search>:<index>"). */
     data class Reference(val deckKey: String) : Screen
     data object ComboTree : Screen
+    /** Your YGO Omega matches (Best of 3), from the replay folder. */
+    data object MatchHistory : Screen
     data object Settings : Screen
 }
 

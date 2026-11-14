@@ -132,6 +132,24 @@ jobs:
           sudo apt-get install -y -q g++-mingw-w64-x86-64-posix
           engine/tools/build_windows.sh "$PWD/engine-windows"
 
+      # The DLL's debug symbols stay out of the app; they go to the symbols branch, per engine
+      # version, to map crash dump addresses to source lines.
+      - name: Keep the engine's debug symbols
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p sym
+          mv engine-windows/ygoe_jni.dll.debug sym/
+          cp engine-windows/ygoe_jni.dll sym/
+          xz -6 -T0 sym/ygoe_jni.dll.debug sym/ygoe_jni.dll
+          REPO="https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}"
+          git clone -q --depth 1 -b symbols "$REPO" symrepo 2>/dev/null || { mkdir symrepo; git -C symrepo init -q -b symbols; }
+          mkdir -p "symrepo/engine-$ENGINE_SHA"
+          cp sym/* "symrepo/engine-$ENGINE_SHA/"
+          cd symrepo
+          git add -A
+          git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "Symbols for engine $ENGINE_SHA"
+          git push -q "$REPO" symbols
+
       - uses: actions/upload-artifact@v4
         with:
           name: engine-windows

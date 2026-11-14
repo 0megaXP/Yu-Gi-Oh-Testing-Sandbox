@@ -1,0 +1,74 @@
+name: Crash test (temporary)
+
+on:
+  push:
+    branches: [crashtest2]
+
+jobs:
+  dlls:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build the engine DLL, before and after the stack fix
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q g++-mingw-w64-x86-64-posix
+          git clone -q https://github.com/0megaXP/Yu-Gi-Oh-Engine eng
+          cd eng
+          git checkout -q 0b1714deaba60f5eda2e929da7252f23d7c92795
+          tools/build_windows.sh "$PWD/../before"
+          git checkout -q d1484eb52ec9fde08d3010c8b17217cbd65dcf53
+          rm -rf build-win
+          tools/build_windows.sh "$PWD/../after"
+          cp -r tests/jni ../jnitests
+          # an Elfnote mirror from the engine's sample decks
+          python3 - <<'PY'
+          import json
+          def deck(p):
+              part, d = "main", {"main": [], "extra": [], "side": []}
+              for l in open(p):
+                  l = l.strip()
+                  if l == "#main": part = "main"
+                  elif l == "#extra": part = "extra"
+                  elif l == "!side": part = "side"
+                  elif l.isdigit(): d[part].append(int(l))
+              d["name"] = "Elfnote"
+              return d
+          e = deck("decks/elfnote_koller_wien_2026-11.ydk")
+          json.dump({"seed": 1, "decks": [e, e]}, open("../mirror.json", "w"))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dlls
+          path: |
+            before/
+            after/
+            jnitests/
+            mirror.json
+
+  windows:
+    needs: dlls
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: actions/download-artifact@v4
+        with:
+          name: dlls
+          path: dlls
+      - name: Elfnote mirror with 16 search threads, before and after
+        run: |
+          mkdir -p cls
+          javac -d cls dlls/jnitests/com/ygoengine/YgoNative.java crashtest-data/java/com/ygoengine/WinRepro.java
+          for v in before after; do
+            for seed in 1 2 3 4 5 6 7 8; do
+              code=0
+              YGOE_THREADS=16 timeout 900 java -cp cls -Djava.library.path=dlls/$v com.ygoengine.WinRepro dlls/$v/ygoe dlls/mirror.json $seed 1 60 > out.txt 2>&1 || code=$?
+              echo "$v seed $seed: exit $code, $(grep -c '^move' out.txt) moves, last: $(grep '^move' out.txt | tail -1)"
+              ls hs_err*.log 2>/dev/null && { grep -A3 "Problematic frame\|EXCEPTION" hs_err*.log | head -8; rm -f hs_err*.log; }
+            done
+          done

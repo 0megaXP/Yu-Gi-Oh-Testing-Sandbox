@@ -410,7 +410,8 @@ private fun Mat(
     maxSlot: Dp = 58.dp,
 ) {
     val top = 1 - bottom
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
+    // "mat": the field's area, where activated cards show up large
+    BoxWithConstraints(Modifier.fillMaxWidth().then(spots.at("mat"))) {
         val gap = MAT_GAP
         val slot = ((maxWidth - gap * 6) / 7).coerceAtMost(maxSlot)
         spots.slotWidth = slot
@@ -778,6 +779,9 @@ class BoardSpots {
         keys.forEach { rects[it] = r }
     }
 
+    /** An area remembered under [key] ("mat": the whole field). */
+    fun area(key: String): Rect? = rects[key]?.takeIf { it.width > 0f }
+
     fun find(p: DuelPlace): Rect? {
         // Xyz materials fly to the monster they're attached to.
         if (p.location and DuelPlace.MATERIAL != 0) return rects["m/${p.player}/${p.sequence}"]
@@ -884,7 +888,7 @@ private fun MoveOverlay(
             }
         }
         effects.toList().forEach { fx ->
-            key(fx.id) { ActivationEffect(fx, origin, colors.of(fx.player), vm) { effects.remove(fx) } }
+            key(fx.id) { ActivationEffect(fx, origin, colors.of(fx.player), vm, spots.area("mat")) { effects.remove(fx) } }
         }
     }
 }
@@ -944,7 +948,7 @@ private const val ACTIVATION_GAP_MS = 650L
  * large in the middle of the board, then fades.
  */
 @Composable
-private fun ActivationEffect(fx: ActivationFx, origin: Offset, color: Color, vm: AppViewModel, onDone: () -> Unit) {
+private fun ActivationEffect(fx: ActivationFx, origin: Offset, color: Color, vm: AppViewModel, field: Rect?, onDone: () -> Unit) {
     val progress = remember { Animatable(0f) }
     var started by remember { mutableStateOf(false) }
     val context = coil3.compose.LocalPlatformContext.current
@@ -988,13 +992,25 @@ private fun ActivationEffect(fx: ActivationFx, origin: Offset, color: Color, vm:
         )
     }
 
-    // The card itself, shown large in the middle: pops in, holds, fades out.
+    // The card itself, shown large in the middle of the field (not of the window, which on a
+    // desktop also holds the log panel): pops in, holds, fades out.
     val appear = (t / 0.2f).coerceIn(0f, 1f)
     val fade = ((1f - t) / 0.25f).coerceIn(0f, 1f)
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    val cardW = 120.dp
+    val cardH = (120 / 0.686f).dp
+    Box(Modifier.fillMaxSize(), contentAlignment = if (field == null) Alignment.Center else Alignment.TopStart) {
         Box(
             Modifier
-                .size(120.dp, (120 / 0.686f).dp)
+                .then(
+                    if (field == null) Modifier
+                    else Modifier.offset {
+                        IntOffset(
+                            (field.center.x - origin.x - cardW.toPx() / 2).roundToInt(),
+                            (field.center.y - origin.y - cardH.toPx() / 2).roundToInt(),
+                        )
+                    }
+                )
+                .size(cardW, cardH)
                 .graphicsLayer {
                     val s = 0.6f + 0.4f * FastOutSlowInEasing.transform(appear)
                     scaleX = s

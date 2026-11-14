@@ -1,8 +1,11 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package com.ygosandbox.app.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,6 +14,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -34,6 +40,7 @@ import com.ygosandbox.app.history.ReplayStep
 import com.ygosandbox.app.model.GameFormat
 import com.ygosandbox.app.play.DuelUi
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 /**
@@ -57,6 +64,7 @@ fun ReplayViewerScreen(vm: AppViewModel, gameId: String) {
     var batch by remember(gameId) { mutableStateOf(0) }
     var forward by remember(gameId) { mutableStateOf(false) }
     var pager by remember { mutableStateOf<Pair<List<Long>, Int>?>(null) }
+    var playing by remember(gameId) { mutableStateOf(false) }
 
     LaunchedEffect(gameId) {
         if (game == null) { problem = "This game isn't in the match history any more."; return@LaunchedEffect }
@@ -108,6 +116,16 @@ fun ReplayViewerScreen(vm: AppViewModel, gameId: String) {
         index = t
     }
 
+    // Auto play: the next move one second after the last one's animations end, until the last move.
+    LaunchedEffect(playing, index) {
+        if (!playing) return@LaunchedEffect
+        if (index >= all.size - 1) { playing = false; return@LaunchedEffect }
+        delay(400) // lets this move's animations start and report how long they take
+        val busy = (vm.duelAnimationsUntil - System.currentTimeMillis()).coerceAtLeast(0L)
+        delay(busy + 600)
+        go(index + 1)
+    }
+
     Box(Modifier.fillMaxSize()) {
         DuelBoardScreen(
             ui, vm, onOpen = { codes, i -> pager = codes to i },
@@ -120,14 +138,19 @@ fun ReplayViewerScreen(vm: AppViewModel, gameId: String) {
                         maxLines = 2, overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.bodyMedium,
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(enabled = index > 0, onClick = { go(index - 1) }) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        OutlinedButton(enabled = index > 0, onClick = { playing = false; go(index - 1) }) {
                             Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = null)
                             Text("Previous move")
                         }
-                        Button(enabled = index < all.size - 1, onClick = { go(index + 1) }) {
+                        Button(enabled = index < all.size - 1, onClick = { playing = false; go(index + 1) }) {
                             Text("Next move")
                             Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
+                        }
+                        // the same button starts and stops auto play
+                        FilledTonalButton(enabled = playing || index < all.size - 1, onClick = { playing = !playing }) {
+                            Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = null)
+                            Text(if (playing) "Stop" else "Auto play")
                         }
                     }
                     Text(

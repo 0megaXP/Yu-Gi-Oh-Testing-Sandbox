@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalLayoutApi::class)
+@file:OptIn(ExperimentalLayoutApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class)
 
 package com.ygosandbox.app.ui
 
@@ -18,6 +18,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -37,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ygosandbox.app.AppViewModel
@@ -58,7 +61,8 @@ fun GuideTab(deck: DeckAnalysis, vm: AppViewModel, gvm: GuideViewModel, cvm: Com
     LaunchedEffect(deck.id) { gvm.library(deck.id) }
     val lib = ui.libraries[deck.id]
     val summary = remember(lib) { lib?.let { GuideSummary.of(it) } }
-    var hasKey by remember { mutableStateOf(gvm.settings.apiKey.isNotBlank()) }
+    var useGemini by remember { mutableStateOf(gvm.settings.guideReader != "claude") }
+    var hasKey by remember(useGemini) { mutableStateOf(gvm.settings.guideReaderOrNull() != null) }
     var showKey by rememberSaveable { mutableStateOf(false) }
     val running = ui.stage.isNotEmpty()
     val busyHere = running && ui.runFor == deck.id
@@ -69,13 +73,26 @@ fun GuideTab(deck: DeckAnalysis, vm: AppViewModel, gvm: GuideViewModel, cvm: Com
         item {
             ComboNote(
                 "Finds the best YouTube guides for this archetype (deck profiles, how-to-play and combo explanations), " +
-                    "reads what they say from their captions with Claude, and keeps it. In duels the bot playing this deck " +
+                    "reads what they say from their captions (Gemini watches the ones without), and keeps it. In duels the bot playing this deck " +
                     "opens with the starters, searches in the guides' order and keeps the key cards; the other bot " +
                     "saves its interruptions for the choke points. Explained combos go to the Combos tab, where the " +
                     "engine checks them by the real rules."
             )
         }
-        if (!hasKey || showKey) item { KeyPanel(cvm, onDone = { showKey = false; hasKey = gvm.settings.apiKey.isNotBlank() }) }
+        item {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FilterChip(selected = useGemini, enabled = !running, onClick = {
+                    useGemini = true; gvm.settings.guideReader = "gemini"; showKey = false
+                }, label = { Text("Google Gemini (free)") })
+                FilterChip(selected = !useGemini, enabled = !running, onClick = {
+                    useGemini = false; gvm.settings.guideReader = "claude"; showKey = false
+                }, label = { Text("Claude (paid)") })
+            }
+        }
+        if (!hasKey || showKey) item {
+            val done = { showKey = false; hasKey = gvm.settings.guideReaderOrNull() != null }
+            if (useGemini) GeminiKeyPanel(gvm, onDone = done) else KeyPanel(cvm, onDone = done)
+        }
         if (busyHere) item {
             Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = MaterialTheme.shapes.medium) {
                 Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -137,6 +154,32 @@ fun GuideTab(deck: DeckAnalysis, vm: AppViewModel, gvm: GuideViewModel, cvm: Com
                     confirmButton = { TextButton(onClick = { gvm.clear(deck.id); confirmClear = false }) { Text("Forget") } },
                     dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Cancel") } },
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun GeminiKeyPanel(gvm: GuideViewModel, onDone: () -> Unit) {
+    var key by remember { mutableStateOf(gvm.settings.geminiKey) }
+    var model by remember { mutableStateOf(gvm.settings.geminiModel) }
+    val uri = LocalUriHandler.current
+    Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = MaterialTheme.shapes.medium) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Reading guides for free with Gemini", fontWeight = FontWeight.SemiBold)
+            ComboNote(
+                "Google's Gemini API has a free tier: sign in at Google AI Studio with a Google account, choose " +
+                    "\"Create API key\" and paste it here (no card needed). The key is kept on this device only. Free use " +
+                    "has daily limits (reading waits when it hits the per-minute one), and Google may use what is sent " +
+                    "on the free tier to improve its products: here, public YouTube captions and card names."
+            )
+            TextButton(onClick = { runCatching { uri.openUri("https://aistudio.google.com/apikey") } }) { Text("Open Google AI Studio") }
+            OutlinedTextField(key, { key = it }, label = { Text("Gemini API key") }, singleLine = true,
+                visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(model, { model = it }, label = { Text("Model") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { gvm.settings.geminiKey = key; gvm.settings.geminiModel = model; onDone() }, enabled = key.isNotBlank()) { Text("Save") }
+                if (gvm.settings.geminiKey.isNotBlank()) TextButton(onClick = onDone) { Text("Cancel") }
             }
         }
     }

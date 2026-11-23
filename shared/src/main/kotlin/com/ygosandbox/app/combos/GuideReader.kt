@@ -9,13 +9,19 @@ import org.json.JSONObject
 
 /**
  * Reads a deck guide (deck profile, "how to play", combo explanation) from its captions and
- * description with Claude, in one call: what the deck wants to do, its starters and extenders,
+ * description in one call: what the deck wants to do, its starters and extenders,
  * what to search first, what to protect, where it is stopped, card choices, explained combos and
- * tips. Card names are resolved against the archetype's card pool afterwards.
+ * tips, with Claude or with Google's Gemini (free tier). Card names are resolved against the archetype's card pool afterwards.
  */
-class GuideReader(apiKey: String, model: String) {
-    private val claude = ComboReader(apiKey, model)
+class GuideReader private constructor(private val claude: ComboReader?, private val gemini: GeminiClient?) {
 
+    /** Can watch a video without captions itself (Gemini reads public YouTube videos). */
+    val watches: Boolean get() = gemini != null
+
+    /**
+     * [watchUrl]: a video with no captions, for a reader that [watches] it. Gemini then watches
+     * it at low resolution, which the free tier allows for a few hours of video a day.
+     */
     suspend fun read(
         archetype: String,
         title: String,
@@ -23,22 +29,34 @@ class GuideReader(apiKey: String, model: String) {
         description: String,
         captions: String,
         pool: List<String>,
+        watchUrl: String? = null,
     ): JSONObject {
-        val content = JSONArray()
-            .put(claude.text(buildString {
-                append("Archetype: $archetype\nVideo: \"$title\" by $uploader\n\n")
-                append("Card names in this archetype's tournament lists (use these exact names):\n")
-                append(pool.joinToString("; "))
-                append("\n\n")
-                if (description.isNotBlank()) append("Video description:\n${description.take(4000)}\n\n")
+        val prompt = buildString {
+            append("Archetype: $archetype\nVideo: \"$title\" by $uploader\n\n")
+            append("Card names in this archetype's tournament lists (use these exact names):\n")
+            append(pool.joinToString("; "))
+            append("\n\n")
+            if (description.isNotBlank()) append("Video description:\n${description.take(4000)}\n\n")
+            if (watchUrl != null) append("The video has no captions: listen to it and read the cards on screen.")
+            else {
                 // ~2 hours of speech fits; longer captions keep their start, where guides explain the basics
                 append("Captions (what the video says, [mm:ss] timestamps; auto-captions mishear card names):\n")
                 append(captions.take(90_000))
-            }))
-        return claude.call(SYSTEM, content, TOOL, maxTokens = 8000, timeoutMs = 240_000)
+            }
+        }
+        gemini?.let { g ->
+            val parts = JSONArray()
+            if (watchUrl != null) parts.put(GeminiClient.youtube(watchUrl))
+            parts.put(GeminiClient.text(prompt))
+            return g.json(SYSTEM, parts, TOOL.getJSONObject("input_schema"), lowMedia = watchUrl != null)
+        }
+        return claude!!.call(SYSTEM, JSONArray().put(claude.text(prompt)), TOOL, maxTokens = 8000, timeoutMs = 240_000)
     }
 
     companion object {
+        fun claude(apiKey: String, model: String) = GuideReader(ComboReader(apiKey, model), null)
+        fun gemini(apiKey: String, model: String) = GuideReader(null, GeminiClient(apiKey, model))
+
         private const val SYSTEM =
             "You read Yu-Gi-Oh! deck guides (deck profiles, how-to-play and combo explanations) from their captions, " +
                 "to teach a game engine to play the deck well. Only report what the video says or clearly shows in " +

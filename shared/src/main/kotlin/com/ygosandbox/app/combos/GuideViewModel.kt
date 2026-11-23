@@ -58,12 +58,11 @@ class GuideViewModel : ViewModel() {
      */
     fun findAndRead(deck: DeckAnalysis, db: CardDatabase, count: Int = 10, onCombos: (List<VideoCombo>) -> Unit) {
         if (job?.isActive == true) return
-        val key = settings.apiKey
-        if (key.isBlank()) {
-            _ui.update { it.copy(runFor = deck.id, note = "Add your Anthropic API key in the Combos tab first: guides are read with Claude.") }
+        val reader = settings.guideReaderOrNull()
+        if (reader == null) {
+            _ui.update { it.copy(runFor = deck.id, note = if (settings.guideReader == "claude") "Add your Anthropic API key first." else "Add your free Google AI Studio key first.") }
             return
         }
-        val reader = GuideReader(key, settings.model)
         val archetype = deck.archetypes.joinToString(" ")
         _ui.update { it.copy(runFor = deck.id, note = null, stage = "Searching YouTube", fraction = 0f) }
         job = BackgroundWork.launch("guides", "Reading deck guides") {
@@ -90,16 +89,24 @@ class GuideViewModel : ViewModel() {
                         _ui.update { it.copy(stage = "${i + 1} of ${todo.size}: $s\n${hit.title}", fraction = (i + f) / todo.size) }
                         BackgroundWork.update("guides", "${i + 1} of ${todo.size}: $s\n${hit.title}", (i + f) / todo.size)
                     }
+                    var watching = false
                     val video = try {
                         stage("Getting the captions", 0.1f)
                         val text = VideoSource.fetchText(hit.url)
-                        if (text.captions.isBlank()) {
+                        if (text.captions.isBlank() && !reader.watches) {
                             noCaptions++
                             GuideVideo(hit.url, hit.title, hit.uploader, hit.date, hit.seconds, "no_captions",
                                 "This video has no English captions")
                         } else {
-                            stage("Reading with Claude", 0.3f)
-                            val raw = reader.read(archetype, hit.title, hit.uploader, text.description, text.captions, pool)
+                            val watch = text.captions.isBlank()
+                            watching = watch
+                            stage(when {
+                                watch -> "No captions: Gemini is watching the video"
+                                reader.watches -> "Reading with Gemini"
+                                else -> "Reading with Claude"
+                            }, 0.3f)
+                            val raw = reader.read(archetype, hit.title, hit.uploader, text.description, text.captions, pool,
+                                watchUrl = hit.url.takeIf { watch })
                             if (!raw.optBoolean("relevant", true)) {
                                 GuideVideo(hit.url, hit.title, hit.uploader, text.date.ifEmpty { hit.date }, hit.seconds, "failed",
                                     "Not a guide for this archetype", readAt = System.currentTimeMillis())
@@ -114,7 +121,10 @@ class GuideViewModel : ViewModel() {
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: ClaudeException) {
-                        throw e // a bad key or model fails every video the same way
+                        // a bad key or model fails every video the same way; watching a video can fail on its own
+                        if (!watching || "API key" in (e.message ?: "") || "used up" in (e.message ?: "")) throw e
+                        failed++
+                        GuideVideo(hit.url, hit.title, hit.uploader, hit.date, hit.seconds, "failed", e.message ?: "")
                     } catch (e: Exception) {
                         failed++
                         GuideVideo(hit.url, hit.title, hit.uploader, hit.date, hit.seconds, "failed", e.message ?: e.javaClass.simpleName)

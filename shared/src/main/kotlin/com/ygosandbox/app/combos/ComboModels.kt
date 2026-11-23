@@ -269,6 +269,26 @@ class ComboSettings() {
     var model: String
         get() = prefs.getString("model", "")?.ifBlank { null } ?: ComboReader.DEFAULT_MODEL
         set(v) = prefs.edit().putString("model", v.trim()).apply()
+
+    /** Who reads deck guides (Analysis tab): "gemini" (Google's free tier) or "claude". */
+    var guideReader: String
+        get() = prefs.getString("guide_reader", "gemini") ?: "gemini"
+        set(v) = prefs.edit().putString("guide_reader", v).apply()
+
+    /** A Google AI Studio API key, for Gemini. */
+    var geminiKey: String
+        get() = prefs.getString("gemini_key", "") ?: ""
+        set(v) = prefs.edit().putString("gemini_key", v.trim()).apply()
+
+    var geminiModel: String
+        get() = prefs.getString("gemini_model", "")?.ifBlank { null } ?: GeminiClient.DEFAULT_MODEL
+        set(v) = prefs.edit().putString("gemini_model", v.trim()).apply()
+
+    /** The guide reader as chosen, or null without its key. */
+    fun guideReaderOrNull(): GuideReader? = when (guideReader) {
+        "claude" -> apiKey.takeIf { it.isNotBlank() }?.let { GuideReader.claude(it, model) }
+        else -> geminiKey.takeIf { it.isNotBlank() }?.let { GuideReader.gemini(it, geminiModel) }
+    }
 }
 
 /** Libraries saved per deck id in combos/<id>.json. */

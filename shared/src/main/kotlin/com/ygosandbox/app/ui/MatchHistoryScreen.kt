@@ -86,9 +86,9 @@ fun MatchHistoryScreen(ui: UiState, vm: AppViewModel) {
     var note by remember { mutableStateOf<String?>(null) }
     var looking by remember { mutableStateOf(false) }
     val state by MatchHistory.state.collectAsState()
-    // archetype tags picked for each side; none picked = any archetype
-    var myDecks by remember { mutableStateOf(emptySet<String>()) }
-    var theirDecks by remember { mutableStateOf(emptySet<String>()) }
+    // archetype tags typed for each side (as in the archetype search); none = any archetype
+    val myTags = remember { mutableStateListOf<String>() }
+    val theirTags = remember { mutableStateListOf<String>() }
     val open = remember { mutableStateListOf<Long>() }
 
     fun refresh() = readFolder(scope, folder, vm, onLooking = { looking = it }, onNote = { note = it })
@@ -102,8 +102,15 @@ fun MatchHistoryScreen(ui: UiState, vm: AppViewModel) {
     }
 
     val all = remember(state.revision) { MatchHistory.matches() }
-    val matches = remember(all, myDecks, theirDecks) {
-        all.filter { (myDecks.isEmpty() || it.myDeck in myDecks) && (theirDecks.isEmpty() || it.theirDeck in theirDecks) }
+    val mine = myTags.toList()
+    val theirs = theirTags.toList()
+    val matches = remember(all, mine, theirs) {
+        all.filter { tagged(it.myDeck, mine) && tagged(it.theirDeck, theirs) }
+    }
+    // suggestions: the archetypes in the history first, then every archetype in the card database
+    val names = remember(all, ui.archetypes) {
+        (all.flatMap { listOf(it.myDeck, it.theirDeck) }.filter { it.isNotBlank() }
+            .groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.map { it.key } + ui.archetypes).distinct()
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -152,13 +159,15 @@ fun MatchHistoryScreen(ui: UiState, vm: AppViewModel) {
             }
             if (all.isNotEmpty()) {
                 item {
-                    ArchetypeTags("Your deck", all.map { it.myDeck }, myDecks) { a ->
-                        myDecks = if (a == null) emptySet() else if (a in myDecks) myDecks - a else myDecks + a
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        ArchetypePicker("Only matches where you played one of these archetypes (none: any).",
+                            "Your deck's archetype", myTags, emptyList(), names)
                     }
                 }
                 item {
-                    ArchetypeTags("Against", all.map { it.theirDeck }, theirDecks) { a ->
-                        theirDecks = if (a == null) emptySet() else if (a in theirDecks) theirDecks - a else theirDecks + a
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        ArchetypePicker("Only matches against one of these archetypes (none: any).",
+                            "Opponent's archetype", theirTags, emptyList(), names)
                     }
                 }
                 item { Summary(matches) }
@@ -189,33 +198,9 @@ private fun readFolder(scope: CoroutineScope, folder: String, vm: AppViewModel, 
     }
 }
 
-/**
- * Archetype tags from the history, most played first: tap tags to keep only those matches
- * (several may be on), "Any" clears them. Long lists show the first ones until expanded.
- */
-@Composable
-private fun ArchetypeTags(label: String, archetypes: List<String>, selected: Set<String>, onTag: (String?) -> Unit) {
-    var more by remember { mutableStateOf(false) }
-    val options = remember(archetypes) { archetypes.groupingBy { it }.eachCount().entries.sortedByDescending { it.value } }
-    val shown = if (more) options else options.take(TAGS_SHOWN).let { top ->
-        // a picked tag stays visible even when folded away
-        top + options.drop(TAGS_SHOWN).filter { it.key in selected }
-    }
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            FilterChip(selected = selected.isEmpty(), onClick = { onTag(null) }, label = { Text("Any") })
-            shown.forEach { (a, n) ->
-                FilterChip(selected = a in selected, onClick = { onTag(a) }, label = { Text("${deckLabel(a)} · $n") })
-            }
-            if (options.size > TAGS_SHOWN) TextButton(onClick = { more = !more }) {
-                Text(if (more) "Fewer" else "+${options.size - TAGS_SHOWN} more")
-            }
-        }
-    }
-}
-
-private const val TAGS_SHOWN = 10
+/** A deck's archetype matches the tags when there are none, or it names one of them. */
+private fun tagged(deck: String, tags: List<String>): Boolean =
+    tags.isEmpty() || tags.any { t -> deck.equals(t, ignoreCase = true) || deck.contains(t, ignoreCase = true) }
 
 @Composable
 private fun Summary(matches: List<HistoryMatch>) {

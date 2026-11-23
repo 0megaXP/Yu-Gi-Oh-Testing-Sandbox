@@ -189,10 +189,13 @@ private fun EngineLearningShare(vm: AppViewModel) {
             }
         }) { Text("Save & send now") }
     }
-    if (st.running) LinearProgressIndicator(Modifier.fillMaxWidth())
+    if (st.running) {
+        st.progress?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        LinearProgressIndicator(progress = { st.fraction }, modifier = Modifier.fillMaxWidth())
+    }
     Text("${st.sent} game${if (st.sent == 1) "" else "s"} sent so far" + (st.note?.let { " · $it" } ?: ""),
         style = MaterialTheme.typography.bodySmall)
-    remember(st.sent, st.running) { share.followSummary() }?.let {
+    remember(st.sent, st.running, st.progress) { share.followSummary() }?.let {
         Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

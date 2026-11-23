@@ -145,7 +145,9 @@ class AppViewModel : ViewModel() {
         // the engine is busy with a duel, or a run is on: try again next time
         // only while the app is on screen (a phone doesn't let background work start from behind)
         if (!visible) return false
-        if (_ui.value.duel.active || com.ygosandbox.app.combos.ReplayLearning.state.value.running || db.cards.isEmpty()) return false
+        if (_ui.value.duel.active || db.cards.isEmpty()) return false
+        // a replay analysis already running: the engine learning upload still goes ahead
+        val analysing = com.ygosandbox.app.combos.ReplayLearning.state.value.running
         val files = runCatching {
             platform.readFolder(folder, ".bytes") { name, modified ->
                 since == 0L || com.ygosandbox.app.combos.OmegaImport.savedAt(name, modified) >= since
@@ -154,13 +156,15 @@ class AppViewModel : ViewModel() {
         val data = com.ygosandbox.app.combos.ReplayLearning.database()
         val fresh = files.filter { (_, b) -> com.ygosandbox.app.combos.OmegaImport.id(b) !in data.ids }
         val waiting = data.pending().size + data.outdated.size
-        if (fresh.isNotEmpty() || (since == 0L && waiting > 0)) {
+        if (!analysing && (fresh.isNotEmpty() || (since == 0L && waiting > 0))) {
             CrashReports.note("Replays to the engine: ${fresh.size} new, $waiting waiting")
             com.ygosandbox.app.combos.ReplayLearning.analyze(files, db, ::engine)
         }
         // and the engine's nightly learning on GitHub, when a token is set (Settings)
         val share = com.ygosandbox.app.history.LearningShare
-        if (share.enabled && share.token.isNotBlank()) viewModelScope.launch { share.send(files, db, ::engine) }
+        val sharing = share.enabled && share.token.isNotBlank()
+        val shareBusy = sharing && share.state.value.running
+        if (sharing && !shareBusy) viewModelScope.launch { share.send(files, db, ::engine) }
         // the match history gets the new games as well
         val history = com.ygosandbox.app.history.MatchHistory
         if (fresh.isNotEmpty() && !history.state.value.running) {
@@ -170,7 +174,8 @@ class AppViewModel : ViewModel() {
                 history.refresh(files, db)
             }
         }
-        return true
+        // look at these files again next time when something was still busy with earlier ones
+        return !analysing && !shareBusy
     }
 
     // ---------- Navigation ----------

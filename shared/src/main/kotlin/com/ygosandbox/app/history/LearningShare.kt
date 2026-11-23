@@ -23,10 +23,12 @@ import java.util.zip.GZIPOutputStream
  * Sends the player's YGO Omega replays to the engine's learning (the value network trained
  * nightly on GitHub, tools/ml in the engine repository). The engine follows each finished game
  * in the real rules core (both players' every action, any phase) and takes training positions
- * along the way as in self-play: the network's numbers from both sides, with who won. Only those numbers are
- * uploaded (no card names, players or accounts), as a replays-*.jsonl.gz file on the engine
- * repository's ml-data release, which the nightly run reads. Needs a GitHub token that can write
- * to that repository.
+ * along the way as in self-play: the network's numbers from both sides, with who won, and
+ * positions to start self-play games from (both decks and the board as card ids). No card names,
+ * players or accounts are uploaded. They go as a replays-*.jsonl.gz file on the engine
+ * repository's ml-data release, which the nightly run reads. The app's combo pieces (from replays
+ * and videos) and its move policy go there too (app-pieces.json, app-policy.json), so the nightly
+ * bots play like the app's. Needs a GitHub token that can write to that repository.
  */
 object LearningShare {
     private const val REPO = "0megaXP/Yu-Gi-Oh-Engine"
@@ -40,6 +42,10 @@ object LearningShare {
     private const val K_COMPLETE = "games_complete_v2"
     private const val K_EVENTS = "events_v2"
     private const val K_FOLLOWED = "events_followed_v2"
+    /** The engine in use writes start positions (games sent before it are sent once more). */
+    private const val K_STARTS = "engine_writes_starts"
+    private const val K_PIECES_HASH = "app_pieces_hash"
+    private const val K_POLICY_HASH = "app_policy_hash"
 
     data class State(
         val running: Boolean = false,
@@ -56,6 +62,8 @@ object LearningShare {
     private val prefs get() = AppPlatform.current.preferences("learning")
     // v2: the first version marked games that failed as done, without sending them
     private val file get() = File(AppPlatform.current.filesDir, "learning_sent_v2.json")
+    // v3: sent by an engine that also writes start positions
+    private val file3 get() = File(AppPlatform.current.filesDir, "learning_sent_v3.json")
 
     /** Fine-grained GitHub token with Contents: read and write on Yu-Gi-Oh-Engine. */
     var token: String
@@ -68,16 +76,16 @@ object LearningShare {
 
     // ---------------------------------------------------------------- sent games
 
-    private fun load(): Set<String> = runCatching {
-        val a = JSONArray(file.readText())
+    private fun load(f: File = file): Set<String> = runCatching {
+        val a = JSONArray(f.readText())
         (0 until a.length()).map { a.getString(it) }.toSet()
     }.getOrDefault(emptySet())
 
-    private fun save(ids: Set<String>) {
-        file.parentFile?.mkdirs()
-        val tmp = File(file.parentFile, file.name + ".tmp")
+    private fun save(ids: Set<String>, f: File = file) {
+        f.parentFile?.mkdirs()
+        val tmp = File(f.parentFile, f.name + ".tmp")
         tmp.writeText(JSONArray(ids.toList()).toString())
-        com.ygosandbox.app.platform.replaceFile(tmp, file)
+        com.ygosandbox.app.platform.replaceFile(tmp, f)
     }
 
     /**
@@ -87,8 +95,17 @@ object LearningShare {
     suspend fun send(files: List<Pair<String, ByteArray>>, db: CardDatabase, engine: suspend () -> YgoEngine): Int {
         if (!enabled || token.isBlank() || _state.value.running) return 0
         val sent = load().toMutableSet()
-        val todo = files.filter { (_, b) -> OmegaImport.id(b) !in sent }
-        if (todo.isEmpty()) return 0
+        val sent3 = load(file3).toMutableSet()
+        // games sent before the engine wrote start positions are sent once more (the nightly run
+        // keeps a game's newest upload only); until the engine is known to write them, one such
+        // game per run checks whether it does
+        val fresh = files.filter { (_, b) -> OmegaImport.id(b) !in sent }
+        val again = files.filter { (_, b) -> OmegaImport.id(b).let { it in sent && it !in sent3 } }
+        val todo = fresh + if (prefs.getBoolean(K_STARTS, false)) again else again.take(1)
+        if (todo.isEmpty()) {
+            runCatching { shareLearned() }
+            return 0
+        }
         _state.update { it.copy(running = true, note = null, progress = "Getting ready", fraction = 0f) }
         var games = 0
         var failed = 0
@@ -102,6 +119,10 @@ object LearningShare {
             prefs.edit().putInt(K_UPLOADED, prefs.getInt(K_UPLOADED, 0) + inBatch).apply()
             sent += waiting
             save(sent)
+            if (prefs.getBoolean(K_STARTS, false)) {
+                sent3 += waiting
+                save(sent3, file3)
+            }
             lines.setLength(0)
             waiting.clear()
             inBatch = 0
@@ -113,9 +134,13 @@ object LearningShare {
                 val id = OmegaImport.id(bytes)
                 try {
                     val positions = withContext(Dispatchers.Default) { positions(bytes, db, engine(), id) }
+                    if (positions.contains("\"kind\":\"start\"") && !prefs.getBoolean(K_STARTS, false))
+                        prefs.edit().putBoolean(K_STARTS, true).apply()
+                    // already sent, and this engine adds nothing new: nothing to send again
+                    val skip = id in sent && !prefs.getBoolean(K_STARTS, false)
                     // a game with no winner (or that couldn't be followed) is done too: nothing to send
-                    waiting += id
-                    if (positions.isNotEmpty()) {
+                    if (!skip) waiting += id
+                    if (positions.isNotEmpty() && !skip) {
                         lines.append(positions)
                         games++
                         inBatch++
@@ -129,6 +154,7 @@ object LearningShare {
                 if (inBatch >= BATCH) flush()
             }
             flush()
+            runCatching { shareLearned() }
             _state.update {
                 it.copy(note = listOfNotNull(
                     if (games > 0) "$games game${if (games == 1) "" else "s"} sent to the engine's learning." else "No new finished games to send.",
@@ -189,6 +215,53 @@ object LearningShare {
         MessageDigest.getInstance("SHA-256").digest(s.toByteArray()).take(8).joinToString("") { "%02x".format(it) }
 
     private fun gzip(b: ByteArray): ByteArray = ByteArrayOutputStream().also { out -> GZIPOutputStream(out).use { it.write(b) } }.toByteArray()
+
+    // ---------------------------------------------------------------- pieces and policy
+
+    /**
+     * The app's combo pieces (from replay turns and video lines, each with how well its line did)
+     * and its move policy, for the nightly bots: uploaded as app-pieces.json / app-policy.json
+     * when they changed since the last upload.
+     */
+    private suspend fun shareLearned() {
+        val pieces = JSONArray()
+        for (t in com.ygosandbox.app.combos.ReplayLearning.database().turns) {
+            val text = t.check?.library ?: continue
+            val arr = runCatching { JSONArray(text) }.getOrNull() ?: continue
+            for (i in 0 until arr.length()) {
+                val piece = arr.getJSONObject(i)
+                piece.put("count", piece.optInt("count", 1) + (t.performance * 4).toInt())
+                if (t.under.isNotEmpty()) piece.put("under", JSONArray(t.under))
+                pieces.put(piece)
+            }
+        }
+        com.ygosandbox.app.combos.ComboStore().all().flatMap { it.videos }.mapNotNull { it.check?.library }.forEach { text ->
+            val arr = runCatching { JSONArray(text) }.getOrNull() ?: return@forEach
+            for (i in 0 until arr.length()) pieces.put(arr.get(i))
+        }
+        if (pieces.length() > 0) replaceIfChanged("app-pieces.json", pieces.toString(), K_PIECES_HASH)
+        com.ygosandbox.app.data.PolicyStore().load()?.let { replaceIfChanged("app-policy.json", it, K_POLICY_HASH) }
+    }
+
+    private suspend fun replaceIfChanged(name: String, text: String, key: String) = withContext(Dispatchers.IO) {
+        val h = hash(text)
+        if (prefs.getString(key, "") == h) return@withContext
+        val release = releaseId()
+        // the release keeps one file of each name: the old one goes first
+        val (lc, lt) = request("GET", "https://api.github.com/repos/$REPO/releases/$release/assets?per_page=100", null, null)
+        if (lc in 200..299) {
+            val assets = JSONArray(lt)
+            for (i in 0 until assets.length()) {
+                val a = assets.getJSONObject(i)
+                if (a.optString("name") == name)
+                    request("DELETE", "https://api.github.com/repos/$REPO/releases/assets/${a.getLong("id")}", null, null)
+            }
+        }
+        val (code, body) = request("POST", "https://uploads.github.com/repos/$REPO/releases/$release/assets?name=$name",
+            text.toByteArray(), "application/json")
+        if (code !in 200..299) throw IllegalStateException(problem(code, body))
+        prefs.edit().putString(key, h).apply()
+    }
 
     // ---------------------------------------------------------------- GitHub
 

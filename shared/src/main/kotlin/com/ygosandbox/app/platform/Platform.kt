@@ -95,6 +95,9 @@ interface Platform {
     /** YGO Omega's Player.data (every saved deck) on this computer, or null when it isn't found. */
     val omegaDecks: java.io.File? get() = null
 
+    /** This device's engine library in the engine's "engine-latest" release, or null when there's none for it. */
+    val engineLibAsset: String? get() = null
+
     // ---- video reading (Combos and Replays tabs)
 
     /** Cutting videos into frames and reading text on them, or null where it isn't available yet. */

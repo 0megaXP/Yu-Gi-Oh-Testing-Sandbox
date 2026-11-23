@@ -48,12 +48,17 @@ class DesktopPlatform(private val resources: File?) : Platform {
     }
 
     override suspend fun openEngine(): YgoEngine = withContext(Dispatchers.IO) {
-        val pack = resources?.let { File(it, "ygoe") }?.takeIf { File(it, "scripts.pack").exists() }
-            ?: error("The engine's card pack is missing from the app's folder. Reinstall YGO Sandbox.")
-        YgoEngine.open(pack)
+        val own = resources?.let { File(it, "ygoe") }?.takeIf { File(it, "scripts.pack").exists() }
+        com.ygosandbox.app.update.EngineUpdate.active?.dir?.takeIf { File(it, "scripts.pack").exists() }?.let { dir ->
+            runCatching { return@withContext YgoEngine.open(dir) }
+        }
+        YgoEngine.open(own ?: error("The engine's card pack is missing from the app's folder. Reinstall YGO Sandbox."))
     }
 
     override val updateAssetSuffix = ".msi"
+
+    override val engineLibAsset: String? =
+        if (System.getProperty("os.name").orEmpty().startsWith("Windows")) "ygoe_jni.dll" else null
 
     /**
      * Installs the update once this app has fully closed, then opens the new version.

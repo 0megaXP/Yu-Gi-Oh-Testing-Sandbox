@@ -9,7 +9,12 @@ import com.ygosandbox.app.platform.CrashReports
 class SandboxApplication : Application() {
     override fun onCreate() {
         super.onCreate()
-        AppPlatform.current = AndroidPlatform(this)
+        val platform = AndroidPlatform(this)
+        AppPlatform.current = platform
+        // a newer engine downloaded from the engine's releases (else the app's own, from the APK)
+        com.ygosandbox.app.update.EngineUpdate.select(platform.engineLibAsset)?.let {
+            System.setProperty("ygoe.library", it.lib.absolutePath)
+        }
         // Android also ends apps in the background, so only recorded errors count as crashes.
         CrashReports.start(uncleanExitMeansCrash = false)
         val system = Thread.getDefaultUncaughtExceptionHandler()

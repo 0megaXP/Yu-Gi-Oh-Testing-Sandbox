@@ -111,6 +111,25 @@ class AppViewModel : ViewModel() {
         checkForUpdates(manual = false)
         viewModelScope.launch { openCardDatabase() }
         viewModelScope.launch { autoLearn() }
+        viewModelScope.launch { engineUpdates() }
+    }
+
+    /**
+     * Loads the engine library (a downloaded engine that crashes here is set aside on the next
+     * start), then looks for a newer engine now and then.
+     */
+    private suspend fun engineUpdates() {
+        val update = com.ygosandbox.app.update.EngineUpdate
+        val loaded = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            // loads the native library (the class's first use)
+            runCatching { Class.forName("com.ygoengine.YgoNative") }.isSuccess
+        }
+        if (loaded) update.opened() else update.failedToLoad()
+        kotlinx.coroutines.delay(15_000)
+        while (true) {
+            if (update.automatic && visible) update.check(com.ygosandbox.app.platform.AppPlatform.current.engineLibAsset)
+            kotlinx.coroutines.delay(6 * 3600_000L)
+        }
     }
 
     // ---------- Replays sent to the engine by themselves ----------

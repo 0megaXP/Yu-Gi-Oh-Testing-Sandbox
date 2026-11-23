@@ -21,6 +21,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.CardColors
+import androidx.compose.material3.Switch
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -74,6 +80,9 @@ fun SettingsScreen(ui: UiState, vm: AppViewModel) {
                     }
                 }
             }
+
+            // ---- Engine (downloaded without updating the app) ----
+            EngineCard(cardColors)
 
             // ---- Appearance ----
             Card(colors = cardColors, modifier = Modifier.fillMaxWidth()) {
@@ -174,3 +183,34 @@ private fun BanlistCard(ui: UiState, vm: AppViewModel) {
         }
     }
 }
+
+/** Which engine runs, and newer ones downloaded from the engine's releases. */
+@Composable
+private fun EngineCard(colors: CardColors) {
+    val upd = com.ygosandbox.app.update.EngineUpdate
+    val st by upd.state.collectAsState()
+    val scope = rememberCoroutineScope()
+    var auto by remember { mutableStateOf(upd.automatic) }
+    val described = remember(st.ready, st.checking) { runCatching { upd.describe() }.getOrDefault("") }
+    Card(colors = colors, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Engine", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "The engine (duel rules, bots, the learned value network) updates on its own: newer engines are " +
+                    "downloaded from its releases and used from the next start, without updating the app.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (described.isNotBlank()) Text(described, style = MaterialTheme.typography.bodyMedium)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Download engine updates automatically", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                Switch(checked = auto, onCheckedChange = { auto = it; upd.automatic = it })
+            }
+            OutlinedButton(enabled = !st.checking, onClick = {
+                scope.launch { upd.check(com.ygosandbox.app.platform.AppPlatform.current.engineLibAsset, manual = true) }
+            }) { Text("Check for a newer engine") }
+            if (st.checking) LinearProgressIndicator(Modifier.fillMaxWidth())
+            st.note?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        }
+    }
+}
+

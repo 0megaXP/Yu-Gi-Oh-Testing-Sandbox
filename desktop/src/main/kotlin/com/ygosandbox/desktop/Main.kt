@@ -37,11 +37,12 @@ import java.io.File
 fun main() {
     // The installer puts the engine DLL and the card pack in the app's resources folder.
     val resources = System.getProperty("compose.application.resources.dir")?.let(::File)
-    resources?.let { File(it, System.mapLibraryName("ygoe_jni")) }?.takeIf { it.exists() }
-        ?.let { System.setProperty("ygoe.library", it.absolutePath) }
-
     val platform = DesktopPlatform(resources)
     AppPlatform.current = platform
+    // a newer engine downloaded from the engine's releases, else the one the app came with
+    val engineLib = com.ygosandbox.app.update.EngineUpdate.select(platform.engineLibAsset)?.lib
+        ?: resources?.let { File(it, System.mapLibraryName("ygoe_jni")) }?.takeIf { it.exists() }
+    engineLib?.let { System.setProperty("ygoe.library", it.absolutePath) }
     CrashLog.install()
     // notes what the app does, and explains the last run's crash, if it crashed
     CrashReports.start(uncleanExitMeansCrash = System.getenv("YGO_TOUR") == null)

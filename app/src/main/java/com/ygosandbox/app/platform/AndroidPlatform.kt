@@ -26,7 +26,16 @@ class AndroidPlatform(context: Context) : Platform {
     override fun preferences(name: String): KeyValueStore =
         SharedPrefsStore(app.getSharedPreferences(name, Context.MODE_PRIVATE))
 
-    override suspend fun openEngine(): YgoEngine = YgoEngine.open(app)
+    override suspend fun openEngine(): YgoEngine {
+        // a newer engine downloaded from the engine's releases, else the one the app came with
+        com.ygosandbox.app.update.EngineUpdate.active?.dir?.takeIf { File(it, "scripts.pack").exists() }?.let { dir ->
+            runCatching { return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { YgoEngine.open(dir) } }
+        }
+        return YgoEngine.open(app)
+    }
+
+    override val engineLibAsset: String? =
+        android.os.Build.SUPPORTED_ABIS.firstOrNull { it == "arm64-v8a" || it == "x86_64" }?.let { "libygoe_jni-$it.so" }
 
     override fun lastExitReason(since: Long): String? {
         if (android.os.Build.VERSION.SDK_INT < 30) return null

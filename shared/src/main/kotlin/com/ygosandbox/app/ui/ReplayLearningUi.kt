@@ -77,6 +77,15 @@ fun ReplayLearningCard(vm: AppViewModel) {
                     "replays on Windows in %USERPROFILE%\\AppData\\LocalLow\\Duelists Unite\\YGO Omega.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            var auto by remember { mutableStateOf(vm.autoLearnReplays) }
+            androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Send new replays to the engine automatically", style = MaterialTheme.typography.bodyMedium)
+                    Text("When the app opens and every few minutes while it runs (not during a duel).",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                androidx.compose.material3.Switch(checked = auto, onCheckedChange = { auto = it; vm.autoLearnReplays = it })
+            }
             if (platform.canTypeFolder) {
                 OutlinedTextField(value = folder, onValueChange = { setFolder(it) }, singleLine = true,
                     label = { Text("Replay folder") }, modifier = Modifier.fillMaxWidth())

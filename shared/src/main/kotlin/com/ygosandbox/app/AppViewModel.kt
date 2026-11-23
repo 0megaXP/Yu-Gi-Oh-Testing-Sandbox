@@ -88,6 +88,8 @@ data class UiState(
     val screen: Screen get() = stack.last()
 }
 
+private const val AUTO_LEARN_EVERY_MS = 5 * 60_000L
+
 class AppViewModel : ViewModel() {
     val settings = Settings()
     val db = CardDatabase()
@@ -108,6 +110,64 @@ class AppViewModel : ViewModel() {
         _ui.update { it.copy(deckGrid = settings.deckGrid) }
         checkForUpdates(manual = false)
         viewModelScope.launch { openCardDatabase() }
+        viewModelScope.launch { autoLearn() }
+    }
+
+    // ---------- Replays sent to the engine by themselves ----------
+
+    /** Whether new YGO Omega replays are sent to the engine by themselves (Settings → YGO Omega replays). */
+    var autoLearnReplays: Boolean
+        get() = com.ygosandbox.app.platform.AppPlatform.current.preferences("replays").getBoolean("auto_learn", true)
+        set(v) {
+            com.ygosandbox.app.platform.AppPlatform.current.preferences("replays").edit().putBoolean("auto_learn", v).apply()
+            if (v) viewModelScope.launch { learnFromNewReplays(since = 0L) }
+        }
+
+    /**
+     * Once the card database is open, and then every few minutes while the app runs: the replay
+     * folder's new games go to the engine (the same analysis as "Analyze replays"), and to the
+     * match history. Lines left unreplayed when the app was closed are picked up too.
+     */
+    private suspend fun autoLearn() {
+        _ui.first { it.dbStatus == DbStatus.READY }
+        var since = 0L
+        while (true) {
+            val started = System.currentTimeMillis()
+            if (autoLearnReplays && learnFromNewReplays(since)) since = started - 120_000L
+            kotlinx.coroutines.delay(AUTO_LEARN_EVERY_MS)
+        }
+    }
+
+    /** Sends the replays saved since [since] (all for 0) that the engine hasn't seen. False when it couldn't look. */
+    private suspend fun learnFromNewReplays(since: Long): Boolean {
+        val platform = com.ygosandbox.app.platform.AppPlatform.current
+        val folder = platform.preferences("replays").getString("omega_folder", null) ?: platform.omegaReplays?.path ?: return false
+        // the engine is busy with a duel, or a run is on: try again next time
+        // only while the app is on screen (a phone doesn't let background work start from behind)
+        if (!visible) return false
+        if (_ui.value.duel.active || com.ygosandbox.app.combos.ReplayLearning.state.value.running || db.cards.isEmpty()) return false
+        val files = runCatching {
+            platform.readFolder(folder, ".bytes") { name, modified ->
+                since == 0L || com.ygosandbox.app.combos.OmegaImport.savedAt(name, modified) >= since
+            }
+        }.getOrNull() ?: return false
+        val data = com.ygosandbox.app.combos.ReplayLearning.database()
+        val fresh = files.filter { (_, b) -> com.ygosandbox.app.combos.OmegaImport.id(b) !in data.ids }
+        val waiting = data.pending().size + data.outdated.size
+        if (fresh.isNotEmpty() || (since == 0L && waiting > 0)) {
+            CrashReports.note("Replays to the engine: ${fresh.size} new, $waiting waiting")
+            com.ygosandbox.app.combos.ReplayLearning.analyze(files, db, ::engine)
+        }
+        // the match history gets the new games as well
+        val history = com.ygosandbox.app.history.MatchHistory
+        if (fresh.isNotEmpty() && !history.state.value.running) {
+            val known = history.known()
+            if (files.any { (_, b) -> com.ygosandbox.app.combos.OmegaImport.id(b) !in known }) {
+                history.readThisSession = true
+                history.refresh(files, db)
+            }
+        }
+        return true
     }
 
     // ---------- Navigation ----------

@@ -197,7 +197,8 @@ jobs:
         run: |
           mkdir -p jni-classes
           javac -d jni-classes engine/tests/jni/com/ygoengine/*.java
-          java -Djava.library.path=desktop/resources/windows -cp jni-classes com.ygoengine.JniSmoke \
+          # 16 search threads, as on a 16-core PC: the setting the Windows duel crash needed.
+          YGOE_THREADS=16 java -Djava.library.path=desktop/resources/windows -cp jni-classes com.ygoengine.JniSmoke \
             desktop/resources/common/ygoe engine/examples | grep -v '^progress'
 
       - uses: gradle/actions/setup-gradle@v4

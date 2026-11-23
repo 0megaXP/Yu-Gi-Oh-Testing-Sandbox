@@ -25,6 +25,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -84,8 +86,9 @@ fun MatchHistoryScreen(ui: UiState, vm: AppViewModel) {
     var note by remember { mutableStateOf<String?>(null) }
     var looking by remember { mutableStateOf(false) }
     val state by MatchHistory.state.collectAsState()
-    var myDeck by rememberSaveable { mutableStateOf<String?>(null) }
-    var theirDeck by rememberSaveable { mutableStateOf<String?>(null) }
+    // archetype tags picked for each side; none picked = any archetype
+    var myDecks by remember { mutableStateOf(emptySet<String>()) }
+    var theirDecks by remember { mutableStateOf(emptySet<String>()) }
     val open = remember { mutableStateListOf<Long>() }
 
     fun refresh() = readFolder(scope, folder, vm, onLooking = { looking = it }, onNote = { note = it })
@@ -99,8 +102,8 @@ fun MatchHistoryScreen(ui: UiState, vm: AppViewModel) {
     }
 
     val all = remember(state.revision) { MatchHistory.matches() }
-    val matches = remember(all, myDeck, theirDeck) {
-        all.filter { (myDeck == null || it.myDeck == myDeck) && (theirDeck == null || it.theirDeck == theirDeck) }
+    val matches = remember(all, myDecks, theirDecks) {
+        all.filter { (myDecks.isEmpty() || it.myDeck in myDecks) && (theirDecks.isEmpty() || it.theirDeck in theirDecks) }
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -149,9 +152,13 @@ fun MatchHistoryScreen(ui: UiState, vm: AppViewModel) {
             }
             if (all.isNotEmpty()) {
                 item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ArchetypeMenu("Your deck", all.map { it.myDeck }, myDeck, Modifier.weight(1f)) { myDeck = it }
-                        ArchetypeMenu("Against", all.map { it.theirDeck }, theirDeck, Modifier.weight(1f)) { theirDeck = it }
+                    ArchetypeTags("Your deck", all.map { it.myDeck }, myDecks) { a ->
+                        myDecks = if (a == null) emptySet() else if (a in myDecks) myDecks - a else myDecks + a
+                    }
+                }
+                item {
+                    ArchetypeTags("Against", all.map { it.theirDeck }, theirDecks) { a ->
+                        theirDecks = if (a == null) emptySet() else if (a in theirDecks) theirDecks - a else theirDecks + a
                     }
                 }
                 item { Summary(matches) }
@@ -182,27 +189,33 @@ private fun readFolder(scope: CoroutineScope, folder: String, vm: AppViewModel, 
     }
 }
 
-/** Picks one archetype (or any) from those in the history, most played first. */
+/**
+ * Archetype tags from the history, most played first: tap tags to keep only those matches
+ * (several may be on), "Any" clears them. Long lists show the first ones until expanded.
+ */
 @Composable
-private fun ArchetypeMenu(label: String, archetypes: List<String>, selected: String?, modifier: Modifier, onSelect: (String?) -> Unit) {
-    var open by remember { mutableStateOf(false) }
+private fun ArchetypeTags(label: String, archetypes: List<String>, selected: Set<String>, onTag: (String?) -> Unit) {
+    var more by remember { mutableStateOf(false) }
     val options = remember(archetypes) { archetypes.groupingBy { it }.eachCount().entries.sortedByDescending { it.value } }
-    Box(modifier) {
-        OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.weight(1f)) {
-                Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(selected?.let(::deckLabel) ?: "Any archetype", maxLines = 1, overflow = TextOverflow.Ellipsis)
+    val shown = if (more) options else options.take(TAGS_SHOWN).let { top ->
+        // a picked tag stays visible even when folded away
+        top + options.drop(TAGS_SHOWN).filter { it.key in selected }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FilterChip(selected = selected.isEmpty(), onClick = { onTag(null) }, label = { Text("Any") })
+            shown.forEach { (a, n) ->
+                FilterChip(selected = a in selected, onClick = { onTag(a) }, label = { Text("${deckLabel(a)} · $n") })
             }
-            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
-        }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            DropdownMenuItem(text = { Text("Any archetype") }, onClick = { onSelect(null); open = false })
-            options.forEach { (a, n) ->
-                DropdownMenuItem(text = { Text("${deckLabel(a)} · $n") }, onClick = { onSelect(a); open = false })
+            if (options.size > TAGS_SHOWN) TextButton(onClick = { more = !more }) {
+                Text(if (more) "Fewer" else "+${options.size - TAGS_SHOWN} more")
             }
         }
     }
 }
+
+private const val TAGS_SHOWN = 10
 
 @Composable
 private fun Summary(matches: List<HistoryMatch>) {

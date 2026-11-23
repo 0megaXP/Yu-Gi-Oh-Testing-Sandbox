@@ -69,14 +69,18 @@ fun ReplaysTab(deck: DeckAnalysis, vm: AppViewModel, rvm: ReplayViewModel, cvm: 
     val lib = ui.libraries[deck.id]
     val busyHere = ui.runFor == deck.id && ui.run != null
     val busyElsewhere = ui.run != null && ui.runFor != deck.id
-    val hasKey = rvm.settings.apiKey.isNotBlank()
+    var hasKey by remember { mutableStateOf(rvm.settings.apiKey.isNotBlank()) }
+    var editKey by remember { mutableStateOf(false) }
     var free by remember { mutableStateOf(rvm.settings.freeReading) }
     var showDropped by rememberSaveable(deck.id) { mutableStateOf(false) }
     val omega = rememberOmegaMatches(deck, vm)
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item { InterruptionNote() }
-        if (!free && !hasKey) item { ReplayNote("Add your Anthropic API key in the Combos tab (gear icon) for Claude reading, or use free reading.") }
+        if (!free && (!hasKey || editKey)) item {
+            ReplayKeyPanel(rvm, onDone = { editKey = false; hasKey = rvm.settings.apiKey.isNotBlank() })
+        }
+        if (!free && hasKey && !editKey) item { TextButton(onClick = { editKey = true }) { Text("Claude API key") } }
         ui.run?.takeIf { busyHere }?.let { p ->
             item {
                 Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.medium) {
@@ -165,8 +169,8 @@ private fun OmegaImportCard(deck: DeckAnalysis, vm: AppViewModel, rvm: ReplayVie
         Column(Modifier.padding(12.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("YGO Omega replays", fontWeight = FontWeight.SemiBold)
             ReplayNote(
-                "Read exactly from Omega's replay files, for free. Going first, the first turn is also added to the Combos tab " +
-                    "for the engine to check. Omega keeps them on Windows in %USERPROFILE%\\AppData\\LocalLow\\Duelists Unite\\YGO Omega."
+                "Read exactly from Omega's replay files, for free. Going first, the first turn is also " +
+                    "checked by the engine. Omega keeps them on Windows in %USERPROFILE%\\AppData\\LocalLow\\Duelists Unite\\YGO Omega."
             )
             if (platform.canTypeFolder) {
                 androidx.compose.material3.OutlinedTextField(
@@ -425,4 +429,25 @@ private fun ReplayLabel(text: String) {
 internal fun ReplayNote(text: String, error: Boolean = false) {
     Text(text, style = MaterialTheme.typography.bodySmall,
         color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+/** Claude reading of match videos needs an Anthropic API key, kept on this device only. */
+@Composable
+private fun ReplayKeyPanel(rvm: ReplayViewModel, onDone: () -> Unit) {
+    var key by remember { mutableStateOf(rvm.settings.apiKey) }
+    var model by remember { mutableStateOf(rvm.settings.model) }
+    Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = MaterialTheme.shapes.medium) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Claude reading", fontWeight = FontWeight.SemiBold)
+            ReplayNote("Reading match videos with Claude needs an Anthropic API key (console.anthropic.com). It stays on this device.")
+            androidx.compose.material3.OutlinedTextField(key, { key = it }, label = { Text("API key") }, singleLine = true,
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+            androidx.compose.material3.OutlinedTextField(model, { model = it }, label = { Text("Model") }, singleLine = true,
+                modifier = Modifier.fillMaxWidth())
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { rvm.settings.apiKey = key; rvm.settings.model = model; onDone() }, enabled = key.isNotBlank()) { Text("Save") }
+                if (rvm.settings.apiKey.isNotBlank()) TextButton(onClick = onDone) { Text("Cancel") }
+            }
+        }
+    }
 }

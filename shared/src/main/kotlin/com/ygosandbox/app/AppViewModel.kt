@@ -31,8 +31,6 @@ import com.ygoengine.LiveDuel
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
-import com.ygosandbox.app.play.HAND_SIZE
-import com.ygosandbox.app.play.PlaySetup
 import com.ygosandbox.app.play.PlayState
 import com.ygosandbox.app.play.deckChoices
 import kotlinx.coroutines.Job
@@ -53,14 +51,7 @@ sealed interface Screen {
     data object Cards : Screen
     data object MyDecks : Screen
     data class DeckEditor(val id: String) : Screen
-    data object Analysis : Screen
-    data class AnalysisDeck(val id: String) : Screen
-    data object Play : Screen
-    data class SidePlan(val deckId: String) : Screen
     data object Duel : Screen
-    /** Reference end boards for a deck choice key ("my:<id>" or "src:<search>:<index>"). */
-    data class Reference(val deckKey: String) : Screen
-    data object ComboTree : Screen
     /** Your YGO Omega matches (Best of 3), from the replay folder. */
     data object MatchHistory : Screen
     /** One game of the match history, replayed move by move. */
@@ -400,15 +391,14 @@ class AppViewModel : ViewModel() {
     fun checkForUpdates(manual: Boolean) {
         viewModelScope.launch {
             try {
-                val info = Updater.check(settings.githubToken)
+                val info = Updater.check()
                 _ui.update { it.copy(update = info) }
                 if (manual && info == null) showMessage("You have the latest version (${Updater.currentVersion})")
             } catch (e: ApiException) {
                 if (manual) showMessage(
                     when (e.code) {
-                        401 -> "GitHub rejected the token. Check it in Settings → App version."
-                        404 -> if (settings.githubToken.isEmpty()) "Add your GitHub token in Settings → App version first."
-                        else "No release found, or the token can't read the Yu-Gi-Oh-Testing-Sandbox repository."
+                        404 -> "No release found on GitHub."
+                        403, 429 -> "GitHub is limiting update checks from this network; try again in an hour."
                         else -> "Couldn't check for updates (HTTP ${e.code})"
                     },
                 )
@@ -441,7 +431,7 @@ class AppViewModel : ViewModel() {
         keepAwake("Downloading the update") {
             _ui.update { it.copy(updateProgress = 0f) }
             try {
-                val apk = Updater.download(info, settings.githubToken) { p ->
+                val apk = Updater.download(info) { p ->
                     _ui.update { it.copy(updateProgress = p) }
                     com.ygosandbox.app.work.BackgroundWork.update("app:Downloading the update", "${(p * 100).toInt()}%", p)
                 }
@@ -465,8 +455,6 @@ class AppViewModel : ViewModel() {
 
     private var engine: YgoEngine? = null
     private val engineLock = Mutex()
-    private var playJob: Job? = null
-    private var sideJob: Job? = null
 
     /**
      * Like viewModelScope.launch, but held by the background-work service while it runs, so a
@@ -497,170 +485,9 @@ class AppViewModel : ViewModel() {
 
     fun deckChoice(key: String?): DeckChoice? = key?.let { k -> playDeckChoices().firstOrNull { it.key == k } }
 
-    fun updatePlaySetup(change: (PlaySetup) -> PlaySetup) = _ui.update { s ->
-        val before = s.play.setup
-        var after = change(before)
-        // A different deck invalidates the hand picked from the old one.
-        if (after.myDeck != before.myDeck) after = after.copy(myHand = emptyList())
-        if (after.opponentDeck != before.opponentDeck) after = after.copy(opponentHand = emptyList())
-        s.copy(play = s.play.copy(setup = after, error = null))
-    }
-
-    /** Deals a random opening hand from the chosen deck. */
-    fun dealHand(mine: Boolean) {
-        val setup = _ui.value.play.setup
-        val deck = deckChoice(if (mine) setup.myDeck else setup.opponentDeck) ?: return
-        val hand = deck.main.shuffled().take(HAND_SIZE)
-        updatePlaySetup { if (mine) it.copy(myHand = hand) else it.copy(opponentHand = hand) }
-    }
-
-    fun runPlay() {
-        if (playJob?.isActive == true) return
-        val setup = _ui.value.play.setup
-        val mine = deckChoice(setup.myDeck)
-        val theirs = deckChoice(setup.opponentDeck)
-        val problem = when {
-            mine == null -> "Pick your deck"
-            theirs == null -> "Pick the opponent's deck"
-            setup.myHand.size != HAND_SIZE -> "Pick your $HAND_SIZE-card hand (or tap Random)"
-            else -> null
-        }
-        if (problem != null) {
-            _ui.update { it.copy(play = it.play.copy(error = problem)) }
-            return
-        }
-        val me = SideState(deck = mine!!.toEngine(::cardName), hand = setup.myHand)
-        val opp = SideState(
-            deck = theirs!!.toEngine(::cardName),
-            hand = if (!setup.real && setup.opponentHand.size == HAND_SIZE) setup.opponentHand else null,
-        )
-        val request = AnalysisRequest(
-            first = if (setup.goingFirst) me else opp,
-            second = if (setup.goingFirst) opp else me,
-            me = if (setup.goingFirst) 0 else 1,
-            knowledge = if (setup.real) Knowledge.REAL else Knowledge.PRACTICE,
-            seed = System.currentTimeMillis(),
-            // Your deck's combo pieces, if its reference boards were built.
-            library = pieceLibrary(mine),
-            policy = policies.load(),
-            imitate = imitations(mine),
-            settings = SearchSettings(
-                iterations = setup.depth.iterations,
-                verifyIterations = setup.depth.verifyIterations,
-                maxSeconds = 240.0,
-                // Leave a core free so the phone stays responsive.
-                threads = (Runtime.getRuntime().availableProcessors() - 1).coerceAtLeast(1),
-            ),
-        )
-        playJob = keepAwake("Play engine is searching") {
-            _ui.update { it.copy(play = it.play.copy(error = null, progress = com.ygoengine.Progress("starting", 0, 0))) }
-            try {
-                val result = engine().analyze(request) { p -> _ui.update { it.copy(play = it.play.copy(progress = p)) } }
-                _ui.update { it.copy(play = it.play.copy(result = result, resultSetup = setup)) }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                _ui.update { it.copy(play = it.play.copy(error = "The engine failed: ${e.message ?: e.toString()}")) }
-            } finally {
-                _ui.update { it.copy(play = it.play.copy(progress = null)) }
-            }
-        }
-    }
-
-    // ---------- Combo tree ----------
-
-    private var treeJob: Job? = null
-
-    /** Main line for your hand going first, and how to continue after each likely hand trap. */
-    fun runComboTree() {
-        if (treeJob?.isActive == true) {
-            open(Screen.ComboTree)
-            return
-        }
-        val setup = _ui.value.play.setup
-        val mine = deckChoice(setup.myDeck)
-        val problem = when {
-            mine == null -> "Pick your deck"
-            setup.myHand.size != HAND_SIZE -> "Pick your $HAND_SIZE-card hand (or tap Random)"
-            else -> null
-        }
-        if (problem != null) {
-            _ui.update { it.copy(play = it.play.copy(error = problem)) }
-            return
-        }
-        val opponent = deckChoice(setup.opponentDeck)
-        open(Screen.ComboTree)
-        treeJob = keepAwake("Building the combo tree") {
-            _ui.update {
-                it.copy(play = it.play.copy(treeError = null, tree = null, treeSetup = setup,
-                    treeProgress = com.ygoengine.Progress("starting", 0, 0)))
-            }
-            try {
-                val tree = engine().comboTree(
-                    mine!!.toEngine(::cardName), setup.myHand, opponent?.toEngine(::cardName),
-                    iterations = setup.depth.iterations,
-                    branchIterations = (setup.depth.iterations / 6).coerceIn(150, 800),
-                    seed = System.currentTimeMillis(),
-                    library = pieceLibrary(mine),
-                    policy = policies.load(),
-                    imitate = imitations(mine),
-                ) { p -> _ui.update { it.copy(play = it.play.copy(treeProgress = p)) } }
-                _ui.update { it.copy(play = it.play.copy(tree = tree)) }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                _ui.update { it.copy(play = it.play.copy(treeError = "The engine failed: ${e.message ?: e.toString()}")) }
-            } finally {
-                _ui.update { it.copy(play = it.play.copy(treeProgress = null)) }
-            }
-        }
-    }
-
-    /** Stops the search early; the lines found so far are still shown. */
-    fun stopPlay() {
-        engine?.cancel()
-    }
-
-    fun setSideOpponent(deckId: String, opponent: String?) = _ui.update {
-        it.copy(play = it.play.copy(sideDeck = deckId, sideOpponent = opponent, sideError = null))
-    }
-
-    fun setSideSimulate(on: Boolean) = _ui.update { it.copy(play = it.play.copy(sideSimulate = on)) }
-
-    fun runSidePlan(deckId: String) {
-        if (sideJob?.isActive == true) return
-        val play = _ui.value.play
-        val mine = deckChoice("my:$deckId")
-        val theirs = deckChoice(play.sideOpponent)
-        if (mine == null || theirs == null) {
-            _ui.update { it.copy(play = it.play.copy(sideError = "Pick the opponent's deck")) }
-            return
-        }
-        sideJob = keepAwake("Building the side plan") {
-            _ui.update {
-                it.copy(play = it.play.copy(sideError = null, sideResult = null, sideProgress = com.ygoengine.Progress("starting", 0, 0)))
-            }
-            try {
-                val result = engine().side(
-                    mine.toEngine(::cardName), theirs.toEngine(::cardName),
-                    simulateTurns = if (play.sideSimulate) 6 else 0,
-                    iterationsPerTurn = 500,
-                ) { p -> _ui.update { it.copy(play = it.play.copy(sideProgress = p)) } }
-                _ui.update { it.copy(play = it.play.copy(sideResult = result, sideDeck = deckId)) }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                _ui.update { it.copy(play = it.play.copy(sideError = "The engine failed: ${e.message ?: e.toString()}")) }
-            } finally {
-                _ui.update { it.copy(play = it.play.copy(sideProgress = null)) }
-            }
-        }
-    }
-
     // ---------- Reference end boards ----------
 
     val references = com.ygosandbox.app.data.ReferenceStore()
-    private var refJob: Job? = null
 
     private val videoCombos = com.ygosandbox.app.combos.ComboStore()
 
@@ -703,65 +530,11 @@ class AppViewModel : ViewModel() {
         val arche = com.ygosandbox.app.combos.ReplayKnowledge.archetypeOf(choice.main + choice.extra, cn)
         val replays = if (arche.isBlank()) null
         else com.ygosandbox.app.combos.ReplayKnowledge.of(com.ygosandbox.app.combos.ReplayLearning.database(), arche, cn)?.forEngine()
-        // and the choke points the deck's guides name (Analysis tab)
-        val guideChokes = guideSummary(choice)?.chokes((choice.main + choice.extra).map { id -> db.find(id)?.id ?: id }.toSet()) { id -> db.find(id)?.id ?: id }.orEmpty()
-        when {
-            guideChokes.isEmpty() -> replays
-            replays == null -> com.ygoengine.DeckKnowledge(guideChokes, 0.0)
-            else -> replays.copy(chokes = (replays.chokes + guideChokes).distinct())
-        }
-    }.getOrNull()
-
-    /** What the deck's guide videos agree on (Analysis tab), or null. */
-    private fun guideSummary(choice: DeckChoice?): com.ygosandbox.app.combos.GuideSummary? = runCatching {
-        choice ?: return null
-        com.ygosandbox.app.combos.GuideViewModel.summaryFor((choice.main + choice.extra).toSet()) { id -> db.find(id)?.id ?: id }
-    }.getOrNull()
-
-    /** Deck-guide advice for this deck's bot: starters, extenders, search order, cards to keep. */
-    fun guidePriorities(choice: DeckChoice?): com.ygoengine.CardPriorities? = runCatching {
-        choice ?: return null
-        guideSummary(choice)?.priorities((choice.main + choice.extra).map { id -> db.find(id)?.id ?: id }.toSet()) { id -> db.find(id)?.id ?: id }
+        replays
     }.getOrNull()
 
     fun referenceFor(choice: DeckChoice?): com.ygoengine.ReferenceResult? =
         choice?.let { references.load(references.signature(it.main, it.extra)) }
-
-    fun buildReference(deckKey: String, thorough: Boolean) {
-        if (refJob?.isActive == true) return
-        val choice = deckChoice(deckKey) ?: return
-        refJob = keepAwake("Building reference end boards") {
-            _ui.update { it.copy(play = it.play.copy(refError = null, refProgress = com.ygoengine.Progress("starting", 0, 0))) }
-            try {
-                val result = engine().reference(
-                    choice.toEngine(::cardName),
-                    hands = if (thorough) 30 else 12,
-                    iterations = if (thorough) 2000 else 1000,
-                    seed = System.currentTimeMillis(),
-                    // the deck's best lines also teach the shared move policy
-                    policy = policies.load(),
-                ) { p -> _ui.update { it.copy(play = it.play.copy(refProgress = p)) } }
-                policies.save(result.policyJson)
-                if (result.samples.isNotEmpty()) references.save(references.signature(choice.main, choice.extra), result)
-                else _ui.update { it.copy(play = it.play.copy(refError = "Stopped before the first hand finished")) }
-                _ui.update { it.copy(play = it.play.copy(refRevision = it.play.refRevision + 1)) }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                _ui.update { it.copy(play = it.play.copy(refError = "The engine failed: ${e.message ?: e.toString()}")) }
-            } finally {
-                _ui.update { it.copy(play = it.play.copy(refProgress = null)) }
-            }
-        }
-    }
-
-    fun stopReference() {
-        engine?.cancel()
-    }
-
-    fun stopSidePlan() {
-        engine?.cancel()
-    }
 
     /** A passcode's card name from the downloaded card database (null if unknown). */
     private fun cardName(id: Long): String? = db.find(id)?.name
@@ -826,8 +599,6 @@ class AppViewModel : ViewModel() {
                     knowledge = if (deck1First) listOf(deckKnowledge(d1), deckKnowledge(d2)) else listOf(deckKnowledge(d2), deckKnowledge(d1)),
                     // replay choices the engine doesn't understand yet, followed by each bot
                     imitate = if (deck1First) listOf(imitations(d1), imitations(d2)) else listOf(imitations(d2), imitations(d1)),
-                    // what each deck's guide videos teach (Analysis tab)
-                    priorities = if (deck1First) listOf(guidePriorities(d1), guidePriorities(d2)) else listOf(guidePriorities(d2), guidePriorities(d1)),
                 )
                 liveDuel = duel
                 publishDuelState(duel)

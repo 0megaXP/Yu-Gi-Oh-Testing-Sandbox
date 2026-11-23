@@ -753,7 +753,7 @@ class PlayerColors(private val bottom: Int, private val bottomColor: Color, priv
 
 @Composable
 private fun playerColors(bottom: Int): PlayerColors =
-    if (isSystemInDarkTheme()) PlayerColors(bottom, Color(0xFF64B5F6), Color(0xFFFF8A65))
+    if (isDarkTheme()) PlayerColors(bottom, Color(0xFF64B5F6), Color(0xFFFF8A65))
     else PlayerColors(bottom, Color(0xFF1565C0), Color(0xFFD84315))
 
 // ---------------- Card movement animation ----------------

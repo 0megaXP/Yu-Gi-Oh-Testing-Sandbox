@@ -43,7 +43,6 @@ import java.util.Date
 
 @Composable
 fun SettingsScreen(ui: UiState, vm: AppViewModel) {
-    var ghToken by rememberSaveable { mutableStateOf(vm.settings.githubToken) }
     val cardColors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
 
     Column(Modifier.fillMaxSize()) {
@@ -62,28 +61,28 @@ fun SettingsScreen(ui: UiState, vm: AppViewModel) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        "Updates come from your private GitHub repository, so the app needs a read-only token " +
-                            "with access to Yu-Gi-Oh-Testing-Sandbox. It stays on this phone.",
+                        "Updates come from the app's public GitHub releases; the app checks when it starts.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    OutlinedTextField(
-                        value = ghToken, onValueChange = { ghToken = it },
-                        label = { Text("GitHub token") }, singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = {
-                            val cleaned = ghToken.filterNot { it.isWhitespace() }
-                            ghToken = cleaned
-                            vm.settings.githubToken = cleaned
-                            vm.checkForUpdates(manual = true)
-                        }) { Text("Save & check") }
+                        OutlinedButton(onClick = { vm.checkForUpdates(manual = true) }) { Text("Check for updates") }
                         if (update != null) Button(
                             onClick = { vm.installUpdate() },
                             enabled = ui.updateProgress == null,
                         ) { Text("Update to ${update.version}") }
+                    }
+                }
+            }
+
+            // ---- Appearance ----
+            Card(colors = cardColors, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Appearance", style = MaterialTheme.typography.titleMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ThemeChoice.entries.forEach { t ->
+                            FilterChip(selected = AppTheme.choice == t, onClick = { AppTheme.choice = t }, label = { Text(t.label) })
+                        }
                     }
                 }
             }

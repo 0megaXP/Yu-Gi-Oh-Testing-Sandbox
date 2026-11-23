@@ -36,10 +36,6 @@ class Tour(private val vm: AppViewModel, private val window: ComposeWindow, priv
         decks.firstOrNull()?.let { d -> vm.open(Screen.DeckEditor(d.id)); shot("03_deck_editor", 9000); vm.back() }
         vm.back()
         vm.open(Screen.Cards); shot("04_cards", 5000); vm.back()
-        vm.open(Screen.Analysis); shot("05_analysis"); 
-        decks.firstOrNull()?.let { d -> vm.open(Screen.AnalysisDeck(d.id)); shot("06_analysis_deck", 6000); vm.back() }
-        vm.back()
-        vm.open(Screen.Play); shot("07_play"); vm.back()
         vm.open(Screen.Settings); shot("08_settings"); vm.back()
 
         vm.open(Screen.Duel); shot("09_duel_setup")

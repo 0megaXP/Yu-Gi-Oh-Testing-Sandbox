@@ -142,7 +142,7 @@ class ComboReader(private val apiKey: String, private val model: String) {
                     if (attempt == 4) throw AnswerTooLong("Claude returned no usable answer for this video")
                 }
                 code == 598 -> if (++timeouts >= 2) throw AnswerTooLong("no answer within ${timeoutMs / 1000} s")
-                code == 401 -> throw ClaudeException("The API key was rejected (check it in the Combos tab settings)")
+                code == 401 -> throw ClaudeException("The API key was rejected (check it in the Replays tab)")
                 code == 400 || code == 404 -> throw ClaudeException("Request refused: " + errorMessage(text))
                 code == 429 || code >= 500 -> if (attempt == 4) throw ClaudeException("Claude is busy: " + errorMessage(text))
                 else -> throw ClaudeException("HTTP $code: " + errorMessage(text))

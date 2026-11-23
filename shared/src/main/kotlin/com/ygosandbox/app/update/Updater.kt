@@ -22,9 +22,9 @@ object Updater {
     val currentVersion: String get() = AppPlatform.current.versionName
 
     /** Returns the newer release, or null if this is already the latest. */
-    suspend fun check(token: String): UpdateInfo? {
-        val headers = mutableMapOf("Accept" to "application/vnd.github+json")
-        if (token.isNotEmpty()) headers["Authorization"] = "Bearer $token"
+    suspend fun check(): UpdateInfo? {
+        // the repository is public: no sign-in needed
+        val headers = mapOf("Accept" to "application/vnd.github+json")
         val json = JSONObject(Http.get("https://api.github.com/repos/$REPO/releases/latest", headers))
         val version = json.optString("tag_name").removePrefix("v")
         val assets = json.optJSONArray("assets") ?: return null
@@ -32,7 +32,6 @@ object Updater {
         val file = (0 until assets.length()).map { assets.getJSONObject(it) }
             .firstOrNull { it.optString("name").endsWith(suffix) } ?: return null
         if (!isNewer(version, currentVersion)) return null
-        // The API asset URL works for private repositories (with the token); browser_download_url doesn't.
         return UpdateInfo(version, file.getString("url"), json.optString("body"))
     }
 
@@ -48,19 +47,17 @@ object Updater {
     }
 
     /** Downloads the update into the app's cache, reporting progress from 0 to 1. */
-    suspend fun download(info: UpdateInfo, token: String, onProgress: (Float) -> Unit): File =
+    suspend fun download(info: UpdateInfo, onProgress: (Float) -> Unit): File =
         withContext(Dispatchers.IO) {
             val dir = File(AppPlatform.current.cacheDir, "updates").apply { mkdirs() }
             dir.listFiles()?.forEach { it.delete() }
             val file = File(dir, "YGOSandbox-${info.version}${AppPlatform.current.updateAssetSuffix}")
-            // GitHub answers with a redirect to a signed download link. Follow it by hand so
-            // the token is only ever sent to api.github.com.
+            // GitHub answers with a redirect to a signed download link on another host; followed by hand.
             val api = URL(info.apkUrl).openConnection() as HttpURLConnection
             val location = try {
                 api.instanceFollowRedirects = false
                 api.connectTimeout = 15_000
                 api.setRequestProperty("Accept", "application/octet-stream")
-                if (token.isNotEmpty()) api.setRequestProperty("Authorization", "Bearer $token")
                 val code = api.responseCode
                 if (code !in 300..399) throw Exception("Download failed (HTTP $code)")
                 api.getHeaderField("Location") ?: throw Exception("Download link missing")

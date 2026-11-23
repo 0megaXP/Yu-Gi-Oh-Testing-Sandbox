@@ -7,11 +7,6 @@ import com.ygosandbox.app.platform.AppPlatform
 class Settings() {
     private val prefs = AppPlatform.current.preferences("settings")
 
-    /** Read-only GitHub token so the updater can see releases of the private repository. */
-    var githubToken: String
-        get() = prefs.getString("github_token", "") ?: ""
-        set(v) = prefs.edit().putString("github_token", v.trim()).apply()
-
     /** Deck lists as a grid of card pictures (default) or as a list with copy counts. */
     var deckGrid: Boolean
         get() = prefs.getBoolean("deck_grid", true)

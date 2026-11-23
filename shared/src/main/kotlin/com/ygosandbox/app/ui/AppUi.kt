@@ -23,9 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.Layers
-import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Style
@@ -81,7 +79,7 @@ fun SandboxApp(vm: AppViewModel) {
             // On a wide window (the desktop app) list screens keep a readable width, centred, so
             // their header icons stay next to the content; the duel board and combo trees use it all.
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
-                val full = (ui.screen == Screen.Duel && ui.duel.active) || ui.screen == Screen.ComboTree || ui.screen is Screen.ReplayViewer
+                val full = (ui.screen == Screen.Duel && ui.duel.active) || ui.screen is Screen.ReplayViewer
                 val width = if (full) maxWidth else minOf(maxWidth, MAX_CONTENT_WIDTH)
                 CompositionLocalProvider(LocalGridColumns provides gridColumnsFor(width)) {
                 Box(Modifier.width(width).fillMaxHeight()) {
@@ -93,13 +91,7 @@ fun SandboxApp(vm: AppViewModel) {
                     Screen.Cards -> CardsScreen(ui, vm)
                     Screen.MyDecks -> MyDecksScreen(ui, vm)
                     is Screen.DeckEditor -> DeckEditorScreen(ui, vm, s.id)
-                    Screen.Analysis -> AnalysisScreen(ui, vm)
-                    is Screen.AnalysisDeck -> AnalysisDeckScreen(ui, vm, s.id)
-                    Screen.Play -> PlayScreen(ui, vm)
-                    is Screen.SidePlan -> SidePlanScreen(ui, vm, s.deckId)
                     Screen.Duel -> DuelScreen(ui, vm)
-                    is Screen.Reference -> ReferenceScreen(ui, vm, s.deckKey)
-                    Screen.ComboTree -> ComboTreeScreen(ui, vm)
                     Screen.Settings -> SettingsScreen(ui, vm)
                     Screen.MatchHistory -> MatchHistoryScreen(ui, vm)
                     is Screen.ReplayViewer -> ReplayViewerScreen(vm, s.gameId)
@@ -159,18 +151,6 @@ private fun MainMenu(ui: UiState, vm: AppViewModel) {
                 else "${ui.decks.size} saved · search a new archetype",
                 modifier = m,
             ) { vm.open(Screen.Decks) } },
-            { m -> MenuTile(
-                Icons.Default.Insights, "Analysis",
-                "Card roles and opening-hand odds for your decks",
-                badge = { TestBadge() },
-                modifier = m,
-            ) { vm.open(Screen.Analysis) } },
-            { m -> MenuTile(
-                Icons.Default.Psychology, "Play engine",
-                "Best plays and end boards for a hand, against a real deck",
-                badge = { TestBadge() },
-                modifier = m,
-            ) { vm.open(Screen.Play) } },
             { m -> MenuTile(
                 Icons.Default.SportsEsports, "Duel simulator",
                 "Play against the bot, or watch two bots duel",

@@ -5,6 +5,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 
 private val Gold = Color(0xFFD9B44A)
@@ -45,10 +48,36 @@ private val Light = lightColorScheme(
     surfaceContainerHighest = Color(0xFFE3DDEC),
 )
 
+/** Light, dark, or as the system is set (Settings → Appearance). */
+enum class ThemeChoice(val label: String) { SYSTEM("As the system"), LIGHT("Light"), DARK("Dark") }
+
+/** The chosen theme, kept in the app's settings; changing it restyles the app at once. */
+object AppTheme {
+    private val prefs get() = com.ygosandbox.app.platform.AppPlatform.current.preferences("settings")
+    private var current by mutableStateOf(
+        runCatching { ThemeChoice.valueOf(prefs.getString("theme", null) ?: "SYSTEM") }.getOrDefault(ThemeChoice.SYSTEM)
+    )
+
+    var choice: ThemeChoice
+        get() = current
+        set(v) {
+            current = v
+            prefs.edit().putString("theme", v.name).apply()
+        }
+}
+
+/** Whether the app is drawn dark now. */
+@Composable
+fun isDarkTheme(): Boolean = when (AppTheme.choice) {
+    ThemeChoice.SYSTEM -> isSystemInDarkTheme()
+    ThemeChoice.LIGHT -> false
+    ThemeChoice.DARK -> true
+}
+
 @Composable
 fun SandboxTheme(content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = if (isSystemInDarkTheme()) Dark else Light,
+        colorScheme = if (isDarkTheme()) Dark else Light,
         content = content,
     )
 }

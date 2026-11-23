@@ -34,6 +34,14 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null && AndroidWork.needsNotificationPermission(this))
             askNotifications.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         setContent {
+            // status and navigation bar icons follow the app's theme, which may differ from the system's
+            val dark = com.ygosandbox.app.ui.isDarkTheme()
+            androidx.compose.runtime.DisposableEffect(dark) {
+                val style = if (dark) androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                else androidx.activity.SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
+                enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
+                onDispose {}
+            }
             SandboxTheme {
                 SandboxApp(vm)
             }

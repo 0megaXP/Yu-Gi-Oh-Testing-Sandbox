@@ -7,7 +7,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -138,11 +145,32 @@ private fun Learned(vm: AppViewModel, revision: Int) {
     val all = remember(revision, cn) { runCatching { ReplayKnowledge.all(ReplayLearning.database(), cn) }.getOrDefault(emptyList()) }
     val data = remember(revision) { ReplayLearning.database() }
     if (data.games.isEmpty()) return
-    var showAll by remember { mutableStateOf(false) }
     Text("${data.games.size} games, ${data.turns.size} turns · the engine verified ${data.turns.count { it.check?.verified == true }} lines",
         fontWeight = FontWeight.SemiBold)
-    (if (showAll) all else all.take(5)).forEach { k -> KnowledgeSummary(k) }
-    if (all.size > 5) TextButton(onClick = { showAll = !showAll }) { Text(if (showAll) "Show fewer" else "All ${all.size} decks") }
+    if (all.isEmpty()) return
+    // one archetype at a time, picked from a dropdown (most played first)
+    val sorted = remember(all) { all.sortedByDescending { it.games } }
+    var picked by remember { mutableStateOf<String?>(null) }
+    var open by remember { mutableStateOf(false) }
+    val k = sorted.firstOrNull { it.archetype == picked } ?: sorted.first()
+    Box(Modifier.fillMaxWidth()) {
+        OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.weight(1f)) {
+                Text("Archetype (${sorted.size})", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("${k.archetype} · ${k.games} game${if (k.games == 1) "" else "s"}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            sorted.forEach { a ->
+                DropdownMenuItem(
+                    text = { Text("${a.archetype} · ${a.games} game${if (a.games == 1) "" else "s"}") },
+                    onClick = { picked = a.archetype; open = false },
+                )
+            }
+        }
+    }
+    KnowledgeSummary(k)
 }
 
 @Composable

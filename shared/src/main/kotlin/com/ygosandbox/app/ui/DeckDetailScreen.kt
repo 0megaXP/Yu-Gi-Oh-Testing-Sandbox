@@ -82,7 +82,6 @@ fun DeckDetailScreen(ui: UiState, vm: AppViewModel, id: String) {
     var confirmDelete by remember { mutableStateOf(false) }
     var viewing by remember(id) { mutableStateOf<SourceDeck?>(null) }
     val combos: ComboViewModel = viewModel { ComboViewModel() }
-    val guides: com.ygosandbox.app.combos.GuideViewModel = viewModel { com.ygosandbox.app.combos.GuideViewModel() }
     val replays: com.ygosandbox.app.combos.ReplayViewModel = viewModel { com.ygosandbox.app.combos.ReplayViewModel() }
     var comboCards by remember(id) { mutableStateOf<Pair<List<Long>, Int>?>(null) }
 
@@ -104,19 +103,15 @@ fun DeckDetailScreen(ui: UiState, vm: AppViewModel, id: String) {
             Summary(deck)
             EditSearchPanel(deck, ui, vm)
             // scrollable: four tabs with counts don't fit a phone's width
-            ScrollableTabRow(selectedTabIndex = tab, edgePadding = 0.dp) {
+            ScrollableTabRow(selectedTabIndex = tab.coerceAtMost(3), edgePadding = 0.dp) {
                 Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Engine (${engine.size})") })
                 Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Non-engine (${nonEngine.size})") })
                 Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Decks (${deck.decks.size})") })
-                Tab(selected = tab == 3, onClick = { tab = 3 }, text = { Text("Combos") })
-                Tab(selected = tab == 4, onClick = { tab = 4 }, text = { Text("Replays") })
-                Tab(selected = tab == 5, onClick = { tab = 5 }, text = { Text("Analysis") })
+                Tab(selected = tab == 3, onClick = { tab = 3 }, text = { Text("Replays") })
             }
             when (tab) {
                 2 -> SourceDeckList(deck.decks, onOpen = { viewing = it })
-                3 -> CombosTab(deck, vm, combos, openCards = { codes, i -> comboCards = codes to i })
-                4 -> ReplaysTab(deck, vm, replays, combos, openCards = { codes, i -> comboCards = codes to i })
-                5 -> GuideTab(deck, vm, guides, combos, openCards = { codes, i -> comboCards = codes to i })
+                3 -> ReplaysTab(deck, vm, replays, combos, openCards = { codes, i -> comboCards = codes to i })
                 else -> CardSections(shown, vm, ui.dbRevision) { index -> pagerStart = index }
             }
         }

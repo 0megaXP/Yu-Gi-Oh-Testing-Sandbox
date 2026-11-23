@@ -117,7 +117,7 @@ class ReplayViewModel : ViewModel() {
                 _ui.update { it.copy(runNote = "$newGames new game${if (newGames == 1) "" else "s"} read" +
                     (if (bo3 > 0) "; $bo3 Best of 3 match${if (bo3 == 1) "" else "es"} put together" else "") +
                     (if (dropped.isNotEmpty()) ", ${dropped.size} left out (see below)" else "") +
-                    (if (lines.isNotEmpty()) ". ${lines.size} first-turn line${if (lines.size == 1) "" else "s"} went to the Combos tab for the engine to check." else ".")) }
+                    (if (lines.isNotEmpty()) ". ${lines.size} first-turn line${if (lines.size == 1) "" else "s"} went to the engine to check." else ".")) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -132,7 +132,7 @@ class ReplayViewModel : ViewModel() {
         if (job?.isActive == true || videos.isEmpty()) return
         val key = settings.apiKey
         if (!settings.freeReading && key.isBlank()) {
-            _ui.update { it.copy(runNote = "Add your Anthropic API key first (Combos tab), or switch to free reading.") }
+            _ui.update { it.copy(runNote = "Add your Anthropic API key first, or switch to free reading.") }
             return
         }
         val reader = if (settings.freeReading) null else MatchReader(ComboReader(key, settings.model))

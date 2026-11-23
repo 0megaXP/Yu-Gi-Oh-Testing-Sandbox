@@ -842,7 +842,20 @@ private class Flight(
     val to: Rect,
     val delayMs: Long,
     val waitKey: String?,
+    /** How the card lies where it starts and where it lands (degrees): see [placeAngle]. */
+    val fromAngle: Float = 0f,
+    val toAngle: Float = 0f,
 )
+
+/**
+ * How a card lies at [p] on the board seen from [bottom]'s side: the top player's cards face
+ * their side (180°), and defense-position monsters lie sideways (+90°).
+ */
+private fun placeAngle(p: DuelPlace, bottom: Int): Float {
+    val side = if (p.player != bottom) 180f else 0f
+    val defense = p.location and DuelPlace.MONSTER_ZONE != 0 && p.position and 0xC != 0
+    return side + if (defense) 90f else 0f
+}
 
 /** Draws the cards that moved in the latest update flying from their old place to their new one. */
 @Composable
@@ -869,7 +882,8 @@ private fun MoveOverlay(
         val wait = (busyUntil - now).coerceAtLeast(0L)
         val times = timeline(d.moves, d.activations)
         times.activations.forEach { (a, start) ->
-            effects += ActivationFx(nextId++, a.code, a.place.player, spots.find(a.place), wait + start)
+            effects += ActivationFx(nextId++, a.code, a.place.player, spots.find(a.place), wait + start,
+                upsideDown = a.place.player != d.bottom)
         }
         // Tell the duel when this update's animations are over, so the next bot move waits for them.
         val end = wait + times.endMs + PRELOAD_SLACK_MS
@@ -882,7 +896,8 @@ private fun MoveOverlay(
                 pending.land(p.waitKey) // nothing to animate: show the card right away
                 return@forEachIndexed
             }
-            flights += Flight(nextId++, p.move.code, hidden(p.move, canSee), from, to, wait + times.moveStarts[i], p.waitKey)
+            flights += Flight(nextId++, p.move.code, hidden(p.move, canSee), from, to, wait + times.moveStarts[i], p.waitKey,
+                fromAngle = placeAngle(p.move.from, d.bottom), toAngle = placeAngle(p.move.to, d.bottom))
         }
     }
     val width = spots.slotWidth - 8.dp
@@ -903,7 +918,11 @@ private fun MoveOverlay(
 
 // ---------------- Activation effect ----------------
 
-private class ActivationFx(val id: Long, val code: Long, val player: Int, val spot: Rect?, val delayMs: Long)
+private class ActivationFx(
+    val id: Long, val code: Long, val player: Int, val spot: Rect?, val delayMs: Long,
+    /** Activated by the top player: the card faces their side of the table. */
+    val upsideDown: Boolean = false,
+)
 
 /** When each move and activation of an update starts, so they play in the order they happened. */
 private class Timeline(val moveStarts: LongArray, val activations: List<Pair<DuelActivation, Long>>) {
@@ -1024,6 +1043,7 @@ private fun ActivationEffect(fx: ActivationFx, origin: Offset, color: Color, vm:
                     scaleX = s
                     scaleY = s
                     alpha = minOf(appear, fade)
+                    rotationZ = if (fx.upsideDown) 180f else 0f
                     shadowElevation = 24f
                 }
                 .border(3.dp, color, RoundedCornerShape(6.dp))
@@ -1099,6 +1119,9 @@ private fun FlyingCard(f: Flight, origin: Offset, width: Dp, vm: AppViewModel, o
                 val lift = 1f + 0.18f * sin(PI * t).toFloat()
                 scaleX = lift
                 scaleY = lift
+                // turn on the way from how it lay to how it lands, the short way round
+                val turn = ((f.toAngle - f.fromAngle) % 360f + 540f) % 360f - 180f
+                rotationZ = f.fromAngle + turn * t
                 shadowElevation = 12f * sin(PI * t).toFloat()
             },
     ) {

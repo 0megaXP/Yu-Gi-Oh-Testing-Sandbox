@@ -51,12 +51,15 @@ import java.util.Date
 @Composable
 fun MyDecksScreen(ui: UiState, vm: AppViewModel) {
     var creating by remember { mutableStateOf(false) }
+    var importing by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf<SavedDeck?>(null) }
     var deleting by remember { mutableStateOf<SavedDeck?>(null) }
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            Header("My decks", onBack = { vm.back() })
+            Header("My decks", onBack = { vm.back() }) {
+                TextButton(onClick = { importing = true }) { Text("Import from Omega") }
+            }
             if (ui.myDecks.isEmpty()) {
                 Column(
                     Modifier.fillMaxSize().padding(32.dp),
@@ -66,7 +69,7 @@ fun MyDecksScreen(ui: UiState, vm: AppViewModel) {
                     Text("No decks yet", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "Create a deck, then add cards from the card database.",
+                        "Create a deck, then add cards from the card database, or import your YGO Omega decks.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -94,6 +97,7 @@ fun MyDecksScreen(ui: UiState, vm: AppViewModel) {
         )
     }
 
+    if (importing) OmegaDeckImportDialog(ui, vm, onDismiss = { importing = false })
     if (creating) NameDialog(
         title = "New deck",
         initial = "",

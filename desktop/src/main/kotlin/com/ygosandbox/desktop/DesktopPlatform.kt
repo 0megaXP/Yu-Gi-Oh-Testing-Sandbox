@@ -122,6 +122,26 @@ class DesktopPlatform(private val resources: File?) : Platform {
             return root.listFiles()?.firstOrNull { it.isDirectory && it.name.equals("Replays", ignoreCase = true) } ?: root
         }
 
+    /**
+     * Omega keeps every saved deck in Player.data, in its install folder (YGO Omega_Data\Files).
+     * Looked for where Omega installs by default; the person can pick the file otherwise.
+     */
+    override val omegaDecks: File?
+        get() {
+            val roots = listOfNotNull(
+                File("C:/YGO Omega"),
+                System.getenv("ProgramFiles")?.let { File(it, "YGO Omega") },
+                System.getenv("ProgramFiles(x86)")?.let { File(it, "YGO Omega") },
+                System.getenv("LOCALAPPDATA")?.let { File(it, "Programs/YGO Omega") },
+                System.getenv("USERPROFILE")?.let { File(it, "YGO Omega") },
+                System.getenv("USERPROFILE")?.let { File(it, "Desktop/YGO Omega") },
+                System.getenv("USERPROFILE")?.let { File(it, "Downloads/YGO Omega") },
+                System.getenv("USERPROFILE")?.let { File(it, "AppData/LocalLow/Duelists Unite/YGO Omega") },
+            )
+            return roots.flatMap { listOf(File(it, "YGO Omega_Data/Files/Player.data"), File(it, "Files/Player.data"), File(it, "Player.data")) }
+                .firstOrNull { it.isFile }
+        }
+
     override val canTypeFolder = true
 
     override suspend fun pickFolder(title: String, startIn: String?): String? = withContext(Dispatchers.IO) {
@@ -146,12 +166,16 @@ class DesktopPlatform(private val resources: File?) : Platform {
                 .map { it.name to it.readBytes() }.toList()
         }
 
-    override suspend fun pickFiles(title: String, startIn: File?): List<Pair<String, ByteArray>> = withContext(Dispatchers.IO) {
+    override suspend fun pickFiles(title: String, startIn: File?, extensions: List<String>): List<Pair<String, ByteArray>> = withContext(Dispatchers.IO) {
         val chooser = javax.swing.JFileChooser(startIn ?: omegaReplays).apply {
             dialogTitle = title
             isMultiSelectionEnabled = true
             fileSelectionMode = javax.swing.JFileChooser.FILES_ONLY
-            fileFilter = javax.swing.filechooser.FileNameExtensionFilter("YGO Omega replays (*.bytes)", "bytes")
+            fileFilter = javax.swing.filechooser.FileNameExtensionFilter(
+                if (extensions == listOf("bytes")) "YGO Omega replays (*.bytes)"
+                else "Decks (" + extensions.joinToString(", ") { "*.$it" } + ")",
+                *extensions.toTypedArray(),
+            )
         }
         var picked: Array<File> = emptyArray()
         javax.swing.SwingUtilities.invokeAndWait {

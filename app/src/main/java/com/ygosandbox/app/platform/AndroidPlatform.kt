@@ -51,7 +51,7 @@ class AndroidPlatform(context: Context) : Platform {
 
     override fun onWorkStarted(first: Boolean) = AndroidWork.onWorkStarted(first)
 
-    override suspend fun pickFiles(title: String, startIn: File?): List<Pair<String, ByteArray>> = AndroidFilePicker.pick()
+    override suspend fun pickFiles(title: String, startIn: File?, extensions: List<String>): List<Pair<String, ByteArray>> = AndroidFilePicker.pick()
 
     override suspend fun pickFolder(title: String, startIn: String?): String? = AndroidFilePicker.pickFolder()
 

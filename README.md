@@ -137,6 +137,7 @@ An Android app for testing and learning Yu-Gi-Oh! decks from real tournament res
   - On your turn, the panel at the bottom lists every legal action or answer. Zone placement and other choices that never matter are made for you.
   - Bots Normal Summon and Set only when it's needed: a Normal Summon comes just before the play that uses that monster, and Sets come after the combo (so they don't take Spell & Trap Zones the combo needs). If the opponent interrupts first, the card is still in hand. A hand trap isn't summoned unless something uses it.
   - Zones matter where a card cares about columns (Angelechy, Infinite Impermanence): the engine and the bots choose where cards go there, and by default keep a Spell/Trap out of their own monsters' columns (and the other way round), so one Imperm can't stop both. Replays give the engine each card's zone, so their lines play out as in the game.
+  - Bots use a hand trap on the opponent's first plays that search or summon from the Deck whenever their search rates it at least as well as passing: stopping a starter can stop the whole turn. Combo pieces from replays can start with a search for a card the hand lacks (Strategy Score searching Opposition).
   - In bot vs bot you can show both hands and set cards.
   - The bot sees every card, including your hand.
 - **Background work:** long jobs keep running when you leave the app or turn the screen off.

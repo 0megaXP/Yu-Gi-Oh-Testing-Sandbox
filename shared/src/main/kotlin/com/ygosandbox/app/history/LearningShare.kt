@@ -1,8 +1,6 @@
 package com.ygosandbox.app.history
 
-import com.ygoengine.DuelState
 import com.ygoengine.YgoEngine
-import com.ygoengine.ZoneCard
 import com.ygosandbox.app.combos.OmegaImport
 import com.ygosandbox.app.combos.OmegaReplay
 import com.ygosandbox.app.data.CardDatabase
@@ -23,9 +21,9 @@ import java.util.zip.GZIPOutputStream
 
 /**
  * Sends the player's YGO Omega replays to the engine's learning (the value network trained
- * nightly on GitHub, tools/ml in the engine repository). Each finished game becomes training
- * positions: the board after the actions of every Main Phase, rebuilt from the replay, turned by
- * the engine into the network's numbers from both sides, with who won. Only those numbers are
+ * nightly on GitHub, tools/ml in the engine repository). The engine follows each finished game
+ * in the real rules core (both players' every action, any phase) and takes training positions
+ * along the way as in self-play: the network's numbers from both sides, with who won. Only those numbers are
  * uploaded (no card names, players or accounts), as a replays-*.jsonl.gz file on the engine
  * repository's ml-data release, which the nightly run reads. Needs a GitHub token that can write
  * to that repository.
@@ -33,7 +31,7 @@ import java.util.zip.GZIPOutputStream
 object LearningShare {
     private const val REPO = "0megaXP/Yu-Gi-Oh-Engine"
     private const val TAG = "ml-data"
-    /** Boards kept per turn (they are much alike; self-play keeps 6). */
+    /** Positions kept per turn (they are much alike; self-play keeps 6). */
     private const val PER_TURN = 6
     /** Games per uploaded file. */
     private const val BATCH = 200
@@ -113,66 +111,43 @@ object LearningShare {
 
     // ---------------------------------------------------------------- positions
 
-    /** The game's training positions as JSON lines, or "" when it has no winner. */
+    /**
+     * The game's training positions as JSON lines ("" when it has no winner or couldn't be
+     * followed at all): the engine re-plays the replay in the real rules core and takes them
+     * along the way, as it does in self-play.
+     */
     private suspend fun positions(bytes: ByteArray, db: CardDatabase, engine: YgoEngine, id: String): String {
-        val steps = ReplayPlayback.build(bytes, db, listOf("Player 1", "Player 2"))
-        val last = steps.lastOrNull()?.state ?: return ""
-        val winner = last.winner
-        if (winner != 0 && winner != 1) return ""
-        // the boards: every Main Phase action, a few per turn spread over it (the last one included)
-        val boards = steps.map { it.state }.filter { it.phase.startsWith("Main Phase") }
-            .groupBy { it.turn }.values.flatMap { turn ->
-                if (turn.size <= PER_TURN) turn
-                else (0 until PER_TURN).map { k -> turn[(turn.size - 1) * (k + 1) / PER_TURN] }
-            }
-        if (boards.isEmpty()) return ""
         val raw = OmegaReplay.raw(bytes)
-        val decks = JSONArray((0..1).map { p -> deckJson(raw.decks.getOrNull(p), steps.map { it.state }, p, db) })
-        val req = JSONObject()
-            .put("decks", decks)
-            .put("winner", winner)
-            .put("finished", true)
-            // only a hash of the game: it keeps a game's positions together (held out as a whole)
-            .put("game", "omega-" + hash(id))
-            .put("boards", JSONArray(boards.map(::boardJson)))
-        return engine.replayPositions(req).first
-    }
-
-    /** A player's deck from the replay, or the cards seen of it when the replay doesn't keep it. */
-    private fun deckJson(deck: Pair<List<Long>, List<Long>>?, states: List<DuelState>, p: Int, db: CardDatabase): JSONObject {
-        val cards = deck?.first ?: states.flatMap { s ->
-            val ps = s.players[p]
-            ps.hand.map { it.code } + ps.graveyard.map { it.code } + ps.banished.map { it.code } +
-                ps.monsters.mapNotNull { it?.code } + ps.spells.mapNotNull { it?.code }
-        }.filter { it != 0L }.distinct()
-        val (extra, main) = cards.partition { db.find(it)?.isExtraDeck == true }
-        return JSONObject().put("main", JSONArray(main)).put("extra", JSONArray(extra))
-    }
-
-    private fun boardJson(s: DuelState): JSONObject {
-        fun zone(cards: List<ZoneCard?>, monster: Boolean) = JSONArray(cards.mapIndexedNotNull { i, c ->
-            c ?: return@mapIndexedNotNull null
-            val pos = when {
-                c.position == "set" -> if (monster) 0x8 else 0xA
-                c.position == "def" -> 0x4
-                else -> 0x1
+        // the lists the replay keeps, main and Extra Deck apart (its deck codes mix them)
+        val decks = (0..1).map { p ->
+            raw.decks.getOrNull(p)?.first?.takeIf { it.isNotEmpty() }?.let { cards ->
+                val (extra, main) = cards.partition { db.find(it)?.isExtraDeck == true }
+                main to extra
             }
-            JSONObject().put("c", c.code).put("p", pos).put("s", i)
-        })
-        return JSONObject()
-            .put("turn", s.turn)
-            .put("turn_player", s.turnPlayer)
-            .put("players", JSONArray(s.players.map { p ->
-                JSONObject()
-                    .put("lp", p.lp)
-                    .put("hand", JSONArray(p.hand.map { it.code }))
-                    .put("grave", JSONArray(p.graveyard.map { it.code }))
-                    .put("banished", JSONArray(p.banished.map { it.code }))
-                    .put("deck", p.deckCount)
-                    .put("extra", p.extra.size)
-                    .put("mzone", zone(p.monsters, true))
-                    .put("szone", zone(p.spells, false))
-            }))
+        }
+        // only a hash of the game: it keeps a game's positions together (held out as a whole)
+        val r = engine.followReplay(raw.messages, decks, "omega-" + hash(id), PER_TURN)
+        if (r.events > 0) {
+            val e = prefs.edit()
+            e.putInt("games_read", prefs.getInt("games_read", 0) + 1)
+            if (r.complete) e.putInt("games_complete", prefs.getInt("games_complete", 0) + 1)
+            e.putLong("events", prefs.getLong("events", 0) + r.events)
+            e.putLong("events_followed", prefs.getLong("events_followed", 0) + r.followed)
+            e.apply()
+        }
+        return if (r.winner == 0 || r.winner == 1) r.jsonl else ""
+    }
+
+    /** How well the engine could follow the replays so far, for Settings. */
+    fun followSummary(): String? {
+        val read = prefs.getInt("games_read", 0)
+        if (read == 0) return null
+        val full = prefs.getInt("games_complete", 0)
+        val ev = prefs.getLong("events", 0)
+        val ok = prefs.getLong("events_followed", 0)
+        val share = if (ev > 0) (100 * ok / ev).toInt() else 0
+        return "The engine re-played $full of $read game${if (read == 1) "" else "s"} to the end by the rules; " +
+            "$share% of everything the replays show was reproduced (games are kept up to where they could be followed)."
     }
 
     private fun hash(s: String): String =

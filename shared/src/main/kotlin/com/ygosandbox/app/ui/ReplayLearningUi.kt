@@ -163,7 +163,8 @@ private fun EngineLearningShare(vm: AppViewModel) {
     Text("Engine learning", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
     Text(
         "The engine's value network trains every night on GitHub. With a token, your finished games go to it too: " +
-            "the board after each Main Phase action, as the network's numbers, with who won. No card names, " +
+            "the engine re-plays each one by the real rules (both players, every phase) and sends the positions it " +
+            "passes through, as the network's numbers, with who won. No card names, " +
             "players or accounts are sent; the data is public on the engine repository. The token is a GitHub " +
             "fine-grained token for 0megaXP/Yu-Gi-Oh-Engine with Contents: read and write; it stays on this device.",
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -191,6 +192,9 @@ private fun EngineLearningShare(vm: AppViewModel) {
     if (st.running) LinearProgressIndicator(Modifier.fillMaxWidth())
     Text("${st.sent} game${if (st.sent == 1) "" else "s"} sent so far" + (st.note?.let { " · $it" } ?: ""),
         style = MaterialTheme.typography.bodySmall)
+    remember(st.sent, st.running) { share.followSummary() }?.let {
+        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }
 
 /** What the replays taught, per archetype. */

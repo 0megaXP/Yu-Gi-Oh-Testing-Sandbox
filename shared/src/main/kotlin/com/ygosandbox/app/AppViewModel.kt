@@ -701,8 +701,27 @@ class AppViewModel : ViewModel() {
         choice ?: return null
         val cn = names()
         val arche = com.ygosandbox.app.combos.ReplayKnowledge.archetypeOf(choice.main + choice.extra, cn)
-        if (arche.isBlank()) null
+        val replays = if (arche.isBlank()) null
         else com.ygosandbox.app.combos.ReplayKnowledge.of(com.ygosandbox.app.combos.ReplayLearning.database(), arche, cn)?.forEngine()
+        // and the choke points the deck's guides name (Analysis tab)
+        val guideChokes = guideSummary(choice)?.chokes((choice.main + choice.extra).map { id -> db.find(id)?.id ?: id }.toSet()) { id -> db.find(id)?.id ?: id }.orEmpty()
+        when {
+            guideChokes.isEmpty() -> replays
+            replays == null -> com.ygoengine.DeckKnowledge(guideChokes, 0.0)
+            else -> replays.copy(chokes = (replays.chokes + guideChokes).distinct())
+        }
+    }.getOrNull()
+
+    /** What the deck's guide videos agree on (Analysis tab), or null. */
+    private fun guideSummary(choice: DeckChoice?): com.ygosandbox.app.combos.GuideSummary? = runCatching {
+        choice ?: return null
+        com.ygosandbox.app.combos.GuideViewModel.summaryFor((choice.main + choice.extra).toSet()) { id -> db.find(id)?.id ?: id }
+    }.getOrNull()
+
+    /** Deck-guide advice for this deck's bot: starters, extenders, search order, cards to keep. */
+    fun guidePriorities(choice: DeckChoice?): com.ygoengine.CardPriorities? = runCatching {
+        choice ?: return null
+        guideSummary(choice)?.priorities((choice.main + choice.extra).map { id -> db.find(id)?.id ?: id }.toSet()) { id -> db.find(id)?.id ?: id }
     }.getOrNull()
 
     fun referenceFor(choice: DeckChoice?): com.ygoengine.ReferenceResult? =
@@ -807,6 +826,8 @@ class AppViewModel : ViewModel() {
                     knowledge = if (deck1First) listOf(deckKnowledge(d1), deckKnowledge(d2)) else listOf(deckKnowledge(d2), deckKnowledge(d1)),
                     // replay choices the engine doesn't understand yet, followed by each bot
                     imitate = if (deck1First) listOf(imitations(d1), imitations(d2)) else listOf(imitations(d2), imitations(d1)),
+                    // what each deck's guide videos teach (Analysis tab)
+                    priorities = if (deck1First) listOf(guidePriorities(d1), guidePriorities(d2)) else listOf(guidePriorities(d2), guidePriorities(d1)),
                 )
                 liveDuel = duel
                 publishDuelState(duel)

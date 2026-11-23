@@ -143,7 +143,7 @@ fun CombosTab(deck: DeckAnalysis, vm: AppViewModel, cvm: ComboViewModel, openCar
 }
 
 @Composable
-private fun KeyPanel(cvm: ComboViewModel, onDone: () -> Unit) {
+internal fun KeyPanel(cvm: ComboViewModel, onDone: () -> Unit) {
     var key by remember { mutableStateOf(cvm.settings.apiKey) }
     var model by remember { mutableStateOf(cvm.settings.model) }
     Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = MaterialTheme.shapes.medium) {
@@ -382,7 +382,7 @@ private fun ComboLabel(text: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun ComboNote(text: String, error: Boolean = false) {
+internal fun ComboNote(text: String, error: Boolean = false) {
     Text(text, style = MaterialTheme.typography.bodySmall,
         color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
 }

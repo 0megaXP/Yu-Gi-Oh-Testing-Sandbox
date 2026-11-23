@@ -143,8 +143,54 @@ fun ReplayLearningCard(vm: AppViewModel) {
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary,
             )
             Learned(vm, state.revision)
+            EngineLearningShare(vm)
         }
     }
+}
+
+/**
+ * Sending the replays to the engine's nightly learning on GitHub: a token that can write to the
+ * engine repository, and a switch. Only training numbers leave the device.
+ */
+@Composable
+private fun EngineLearningShare(vm: AppViewModel) {
+    val share = com.ygosandbox.app.history.LearningShare
+    val st by share.state.collectAsState()
+    var token by remember { mutableStateOf(share.token) }
+    var on by remember { mutableStateOf(share.enabled) }
+    val scope = rememberCoroutineScope()
+    val platform = remember { com.ygosandbox.app.platform.AppPlatform.current }
+    Text("Engine learning", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+    Text(
+        "The engine's value network trains every night on GitHub. With a token, your finished games go to it too: " +
+            "the board after each Main Phase action, as the network's numbers, with who won. No card names, " +
+            "players or accounts are sent; the data is public on the engine repository. The token is a GitHub " +
+            "fine-grained token for 0megaXP/Yu-Gi-Oh-Engine with Contents: read and write; it stays on this device.",
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        Text("Send my replays to the engine's learning", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        androidx.compose.material3.Switch(checked = on, onCheckedChange = { on = it; share.enabled = it })
+    }
+    OutlinedTextField(
+        value = token, onValueChange = { token = it }, singleLine = true, label = { Text("GitHub token") },
+        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(),
+    )
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(enabled = !st.running && on && token.isNotBlank(), onClick = {
+            share.token = token
+            token = share.token
+            scope.launch {
+                val folder = platform.preferences("replays").getString("omega_folder", null) ?: platform.omegaReplays?.path
+                if (folder == null) return@launch
+                val files = runCatching { platform.readFolder(folder, ".bytes") { _, _ -> true } }.getOrDefault(emptyList())
+                share.send(files, vm.db, vm::engine)
+            }
+        }) { Text("Save & send now") }
+    }
+    if (st.running) LinearProgressIndicator(Modifier.fillMaxWidth())
+    Text("${st.sent} game${if (st.sent == 1) "" else "s"} sent so far" + (st.note?.let { " · $it" } ?: ""),
+        style = MaterialTheme.typography.bodySmall)
 }
 
 /** What the replays taught, per archetype. */

@@ -158,6 +158,9 @@ class AppViewModel : ViewModel() {
             CrashReports.note("Replays to the engine: ${fresh.size} new, $waiting waiting")
             com.ygosandbox.app.combos.ReplayLearning.analyze(files, db, ::engine)
         }
+        // and the engine's nightly learning on GitHub, when a token is set (Settings)
+        val share = com.ygosandbox.app.history.LearningShare
+        if (share.enabled && share.token.isNotBlank()) viewModelScope.launch { share.send(files, db, ::engine) }
         // the match history gets the new games as well
         val history = com.ygosandbox.app.history.MatchHistory
         if (fresh.isNotEmpty() && !history.state.value.running) {

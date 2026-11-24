@@ -42,8 +42,8 @@ object LearningShare {
     private const val K_COMPLETE = "games_complete_v2"
     private const val K_EVENTS = "events_v2"
     private const val K_FOLLOWED = "events_followed_v2"
-    /** The engine in use writes start positions (games sent before it are sent once more). */
-    private const val K_SUMMARY = "engine_writes_follow_summary"
+    /** The newest follower version the engine has reported (FollowResult.followVersion). */
+    private const val K_FOLLOW_VERSION = "engine_follow_version"
     private const val K_PIECES_HASH = "app_pieces_hash"
     private const val K_POLICY_HASH = "app_policy_hash"
     /** The game being re-played (id and file name): still set at the next start means it hung. */
@@ -68,7 +68,10 @@ object LearningShare {
     // v2: the first version marked games that failed as done, without sending them
     private val file get() = File(AppPlatform.current.filesDir, "learning_sent_v2.json")
     // v4: sent by an engine that also writes how far it followed each game (and follows more)
-    private val file4 get() = File(AppPlatform.current.filesDir, "learning_sent_v4.json")
+    // the games sent by an engine of follower version v (a newer version sends them all again)
+    private fun fileV(v: Int) = File(AppPlatform.current.filesDir, "learning_sent_follow_v$v.json")
+    /** The follower version of the last game re-played. */
+    private var lastVersion = 0
     // games re-played but not uploaded yet (uploaded 10 at a time): kept across restarts
     private val pendingLines get() = File(AppPlatform.current.filesDir, "learning_pending.jsonl")
     private val pendingIds get() = File(AppPlatform.current.filesDir, "learning_pending_ids.json")
@@ -111,27 +114,30 @@ object LearningShare {
     suspend fun send(files: List<Pair<String, ByteArray>>, db: CardDatabase, engine: suspend () -> YgoEngine): Int {
         if (!enabled || token.isBlank() || _state.value.running) return 0
         val sent = load().toMutableSet()
-        val sent4 = load(file4).toMutableSet()
+        // games sent by an engine whose follower was older than the newest seen are sent once
+        // more (it follows more of them; the nightly run keeps each game's newest positions)
+        var version = prefs.getInt(K_FOLLOW_VERSION, 0)
+        var sentV = load(fileV(version)).toMutableSet()
         // a game still marked as being re-played: the app was closed (or stuck) on it last time;
         // it is set aside so one replay can't hold up all the others
         prefs.getString(K_TRYING, null)?.takeIf { it.isNotBlank() }?.let { stuck ->
             val name = prefs.getString(K_TRYING_NAME, null) ?: stuck
             sent += stuck
-            sent4 += stuck
+            sentV += stuck
             save(sent)
-            save(sent4, file4)
+            if (version > 0) save(sentV, fileV(version))
             runCatching { skippedFile.writeText(JSONArray((skipped() + name).distinct().takeLast(50)).toString()) }
             prefs.edit().remove(K_TRYING).remove(K_TRYING_NAME).apply()
         }
         // games re-played last time but not uploaded yet: they go with the next upload
         val carried = load(pendingIds)
         sent += carried
-        // games sent before the engine wrote its follow summary are sent once more (it also
-        // follows more of them; the nightly run keeps a game's newest upload only); until the
-        // engine is known to write it, one such game per run checks whether it does
+        // until the engine's version is known, and once all is sent with it, one sent game per
+        // run checks whether the engine has a newer follower
         val fresh = files.filter { (_, b) -> OmegaImport.id(b) !in sent }
-        val again = files.filter { (_, b) -> OmegaImport.id(b).let { it in sent && it !in sent4 && it !in carried } }
-        val todo = fresh + if (prefs.getBoolean(K_SUMMARY, false)) again else again.take(1)
+        val again = files.filter { (_, b) -> OmegaImport.id(b).let { it in sent && it !in sentV && it !in carried } }
+        val probe = files.filter { (_, b) -> OmegaImport.id(b).let { it in sent && it !in carried } }.take(1)
+        val todo = fresh + if (version == 0) probe else again.ifEmpty { probe }
         if (todo.isEmpty() && carried.isEmpty()) {
             runCatching { shareLearned() }
             return 0
@@ -157,9 +163,9 @@ object LearningShare {
             prefs.edit().putInt(K_UPLOADED, prefs.getInt(K_UPLOADED, 0) + inBatch).apply()
             sent += waiting
             save(sent)
-            if (prefs.getBoolean(K_SUMMARY, false)) {
-                sent4 += waiting
-                save(sent4, file4)
+            if (version > 0) {
+                sentV += waiting
+                save(sentV, fileV(version))
             }
             lines.setLength(0)
             waiting.clear()
@@ -177,10 +183,16 @@ object LearningShare {
                 prefs.edit().putString(K_TRYING, id).putString(K_TRYING_NAME, name).apply()
                 try {
                     val positions = withContext(Dispatchers.Default) { positions(bytes, db, engine(), id) }
-                    if (positions.contains("\"kind\":\"follow\"") && !prefs.getBoolean(K_SUMMARY, false))
-                        prefs.edit().putBoolean(K_SUMMARY, true).apply()
-                    // already sent, and this engine adds nothing new: nothing to send again
-                    val skip = id in sent && !prefs.getBoolean(K_SUMMARY, false)
+                    if (lastVersion > version) {
+                        // a newer follower: what was sent before goes again (from the next run;
+                        // the games re-played so far in this run were by the older one)
+                        flush()
+                        version = lastVersion
+                        sentV = load(fileV(version)).toMutableSet()
+                        prefs.edit().putInt(K_FOLLOW_VERSION, version).apply()
+                    }
+                    // already sent by this follower: nothing new to send again
+                    val skip = id in sent && id in sentV
                     // a game with no winner (or that couldn't be followed) is done too: nothing to send
                     if (!skip) waiting += id
                     if (positions.isNotEmpty() && !skip) {
@@ -233,6 +245,7 @@ object LearningShare {
         }
         // only a hash of the game: it keeps a game's positions together (held out as a whole)
         val r = engine.followReplay(raw.messages, decks, "omega-" + hash(id), PER_TURN)
+        lastVersion = r.followVersion
         if (r.events > 0) {
             val e = prefs.edit()
             e.putInt(K_READ, prefs.getInt(K_READ, 0) + 1)

@@ -21,34 +21,23 @@ import java.util.zip.GZIPOutputStream
 
 /**
  * Sends the player's YGO Omega replays to the engine's learning (the value network trained
- * nightly on GitHub, tools/ml in the engine repository). The engine follows each finished game
- * in the real rules core (both players' every action, any phase) and takes training positions
- * along the way as in self-play: the network's numbers from both sides, with who won, and
- * positions to start self-play games from (both decks and the board as card ids). No card names,
- * players or accounts are uploaded. They go as a replays-*.jsonl.gz file on the engine
- * repository's ml-data release, which the nightly run reads. The app's combo pieces (from replays
+ * nightly on GitHub, tools/ml in the engine repository): each game's moves (the replay's game
+ * messages, card ids) and the decks it keeps, without the replay's header (no players, accounts
+ * or settings). They go as inputs-*.jsonl.gz files on the engine repository's ml-data release;
+ * the nightly run follows every game in the real rules core with its newest engine and takes
+ * training positions along the way as in self-play. The app's combo pieces (from replays
  * and videos) and its move policy go there too (app-pieces.json, app-policy.json), so the nightly
  * bots play like the app's. Needs a GitHub token that can write to that repository.
  */
 object LearningShare {
     private const val REPO = "0megaXP/Yu-Gi-Oh-Engine"
     private const val TAG = "ml-data"
-    /** Positions kept per turn (they are much alike; self-play keeps 6). */
-    private const val PER_TURN = 6
-    /** Games per uploaded file (the counter moves after each file). */
-    private const val BATCH = 10
-    private const val K_UPLOADED = "uploaded_v2"
-    private const val K_READ = "games_read_v2"
-    private const val K_COMPLETE = "games_complete_v2"
-    private const val K_EVENTS = "events_v2"
-    private const val K_FOLLOWED = "events_followed_v2"
-    /** The newest follower version the engine has reported (FollowResult.followVersion). */
-    private const val K_FOLLOW_VERSION = "engine_follow_version"
+    /** Games per uploaded file, and its largest size before gzip (the counter moves after each file). */
+    private const val INPUT_BATCH = 50
+    private const val MAX_BYTES = 8_000_000
+    private const val K_UPLOADED = "uploaded_inputs_v1"
     private const val K_PIECES_HASH = "app_pieces_hash"
     private const val K_POLICY_HASH = "app_policy_hash"
-    /** The game being re-played (id and file name): still set at the next start means it hung. */
-    private const val K_TRYING = "trying_game"
-    private const val K_TRYING_NAME = "trying_game_name"
 
     data class State(
         val running: Boolean = false,
@@ -68,21 +57,11 @@ object LearningShare {
     // v2: the first version marked games that failed as done, without sending them
     private val file get() = File(AppPlatform.current.filesDir, "learning_sent_v2.json")
     // v4: sent by an engine that also writes how far it followed each game (and follows more)
-    // the games sent by an engine of follower version v (a newer version sends them all again)
-    private fun fileV(v: Int) = File(AppPlatform.current.filesDir, "learning_sent_follow_v$v.json")
-    /** The follower version of the last game re-played. */
-    private var lastVersion = 0
-    // games re-played but not uploaded yet (uploaded 10 at a time): kept across restarts
-    private val pendingLines get() = File(AppPlatform.current.filesDir, "learning_pending.jsonl")
-    private val pendingIds get() = File(AppPlatform.current.filesDir, "learning_pending_ids.json")
-    // games the engine got stuck on (the app was closed while re-playing them): skipped, by file name
-    private val skippedFile get() = File(AppPlatform.current.filesDir, "learning_skipped.json")
+    // the games whose moves were uploaded (followed in the nightly run)
+    private val inputsFile get() = File(AppPlatform.current.filesDir, "learning_inputs_sent.json")
 
-    /** Replays skipped because the engine got stuck on them (file names). */
-    fun skipped(): List<String> = runCatching {
-        val a = JSONArray(skippedFile.readText())
-        (0 until a.length()).map { a.getString(it) }
-    }.getOrDefault(emptyList())
+    /** Replays skipped because the engine got stuck on them: none now (the phone doesn't re-play them). */
+    fun skipped(): List<String> = emptyList()
 
     /** Fine-grained GitHub token with Contents: read and write on Yu-Gi-Oh-Engine. */
     var token: String
@@ -108,37 +87,18 @@ object LearningShare {
     }
 
     /**
-     * Uploads the positions of the [files]' games not sent yet. Returns how many games were sent;
-     * nothing happens without a token, when switched off, or while another upload runs.
+     * Uploads the [files]' games not sent yet: each game's moves (the replay's game messages) and
+     * the decks it keeps, with no player names, accounts or settings (the replay's header stays
+     * here). The nightly run follows every uploaded game in the rules core with its newest engine
+     * (ygoe-cli followall), so each fix to the follower counts for all of them. Returns how many
+     * games were sent; nothing happens without a token, when switched off, or while another
+     * upload runs.
      */
-    suspend fun send(files: List<Pair<String, ByteArray>>, db: CardDatabase, engine: suspend () -> YgoEngine): Int {
+    suspend fun send(files: List<Pair<String, ByteArray>>, db: CardDatabase, @Suppress("UNUSED_PARAMETER") engine: suspend () -> YgoEngine): Int {
         if (!enabled || token.isBlank() || _state.value.running) return 0
-        val sent = load().toMutableSet()
-        // games sent by an engine whose follower was older than the newest seen are sent once
-        // more (it follows more of them; the nightly run keeps each game's newest positions)
-        var version = prefs.getInt(K_FOLLOW_VERSION, 0)
-        var sentV = load(fileV(version)).toMutableSet()
-        // a game still marked as being re-played: the app was closed (or stuck) on it last time;
-        // it is set aside so one replay can't hold up all the others
-        prefs.getString(K_TRYING, null)?.takeIf { it.isNotBlank() }?.let { stuck ->
-            val name = prefs.getString(K_TRYING_NAME, null) ?: stuck
-            sent += stuck
-            sentV += stuck
-            save(sent)
-            if (version > 0) save(sentV, fileV(version))
-            runCatching { skippedFile.writeText(JSONArray((skipped() + name).distinct().takeLast(50)).toString()) }
-            prefs.edit().remove(K_TRYING).remove(K_TRYING_NAME).apply()
-        }
-        // games re-played last time but not uploaded yet: they go with the next upload
-        val carried = load(pendingIds)
-        sent += carried
-        // until the engine's version is known, and once all is sent with it, one sent game per
-        // run checks whether the engine has a newer follower
-        val fresh = files.filter { (_, b) -> OmegaImport.id(b) !in sent }
-        val again = files.filter { (_, b) -> OmegaImport.id(b).let { it in sent && it !in sentV && it !in carried } }
-        val probe = files.filter { (_, b) -> OmegaImport.id(b).let { it in sent && it !in carried } }.take(1)
-        val todo = fresh + if (version == 0) probe else again.ifEmpty { probe }
-        if (todo.isEmpty() && carried.isEmpty()) {
+        val sent = load(inputsFile).toMutableSet()
+        val todo = files.filter { (_, b) -> OmegaImport.id(b) !in sent }
+        if (todo.isEmpty()) {
             runCatching { shareLearned() }
             return 0
         }
@@ -146,76 +106,47 @@ object LearningShare {
         var games = 0
         var failed = 0
         var firstError: String? = null
-        val lines = StringBuilder(runCatching { pendingLines.readText() }.getOrDefault(""))
-        val waiting = ArrayList<String>(carried)  // games in [lines], marked done once uploaded
-        var inBatch = carried.size
-        // what was re-played is kept on disk at once, so a restart doesn't re-play it again
-        fun keep() {
-            runCatching {
-                pendingLines.writeText(lines.toString())
-                save(waiting.toSet(), pendingIds)
-            }
-        }
+        val lines = StringBuilder()
+        val waiting = ArrayList<String>()
+        var inBatch = 0
         suspend fun flush() {
             if (waiting.isEmpty()) return
-            if (lines.isNotEmpty()) upload(gzip(lines.toString().toByteArray()))
-            runCatching { pendingLines.delete(); pendingIds.delete() }
+            if (lines.isNotEmpty()) upload(gzip(lines.toString().toByteArray()), "inputs")
             prefs.edit().putInt(K_UPLOADED, prefs.getInt(K_UPLOADED, 0) + inBatch).apply()
+            inBatch = 0
             sent += waiting
-            save(sent)
-            if (version > 0) {
-                sentV += waiting
-                save(sentV, fileV(version))
-            }
+            save(sent, inputsFile)
             lines.setLength(0)
             waiting.clear()
-            inBatch = 0
             _state.update { it.copy(sent = prefs.getInt(K_UPLOADED, 0)) }
         }
         try {
             todo.forEachIndexed { i, (name, bytes) ->
-                _state.update {
-                    it.copy(progress = "Re-playing game ${i + 1} of ${todo.size} by the rules", fraction = i.toFloat() / todo.size,
-                        gameStarted = System.currentTimeMillis())
-                }
+                _state.update { it.copy(progress = "Preparing game ${i + 1} of ${todo.size}", fraction = i.toFloat() / todo.size) }
                 val id = OmegaImport.id(bytes)
-                if (id in carried) return@forEachIndexed
-                prefs.edit().putString(K_TRYING, id).putString(K_TRYING_NAME, name).apply()
                 try {
-                    val positions = withContext(Dispatchers.Default) { positions(bytes, db, engine(), id) }
-                    if (lastVersion > version) {
-                        // a newer follower: what was sent before goes again (from the next run;
-                        // the games re-played so far in this run were by the older one)
-                        flush()
-                        version = lastVersion
-                        sentV = load(fileV(version)).toMutableSet()
-                        prefs.edit().putInt(K_FOLLOW_VERSION, version).apply()
-                    }
-                    // already sent by this follower: nothing new to send again
-                    val skip = id in sent && id in sentV
-                    // a game with no winner (or that couldn't be followed) is done too: nothing to send
-                    if (!skip) waiting += id
-                    if (positions.isNotEmpty() && !skip) {
-                        lines.append(positions)
+                    val line = withContext(Dispatchers.Default) { input(bytes, db, id) }
+                    waiting += id
+                    if (line != null) {
+                        lines.append(line).append('\n')
                         games++
                         inBatch++
                     }
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
-                    // not marked done: tried again next time
+                    // an unreadable replay: marked done (it won't read better next time)
+                    waiting += id
                     failed++
                     if (firstError == null) firstError = "$name: ${e.message ?: e.javaClass.simpleName}"
                 }
-                prefs.edit().remove(K_TRYING).remove(K_TRYING_NAME).apply()
-                keep()
-                if (inBatch >= BATCH) flush()
+                if (lines.length > MAX_BYTES || waiting.size >= INPUT_BATCH) flush()
             }
             flush()
             runCatching { shareLearned() }
             _state.update {
                 it.copy(note = listOfNotNull(
-                    if (games > 0) "$games game${if (games == 1) "" else "s"} sent to the engine's learning." else "No new finished games to send.",
-                    if (failed > 0) "$failed couldn't be re-played (first: $firstError)" else null,
+                    if (games > 0) "$games game${if (games == 1) "" else "s"} sent to the engine's learning." else "No new games to send.",
+                    if (failed > 0) "$failed couldn't be read (first: $firstError)" else null,
                 ).joinToString(" "))
             }
         } catch (e: Exception) {
@@ -227,52 +158,35 @@ object LearningShare {
         return games
     }
 
-    // ---------------------------------------------------------------- positions
-
-    /**
-     * The game's training positions as JSON lines ("" when it has no winner or couldn't be
-     * followed at all): the engine re-plays the replay in the real rules core and takes them
-     * along the way, as it does in self-play.
-     */
-    private suspend fun positions(bytes: ByteArray, db: CardDatabase, engine: YgoEngine, id: String): String {
+    /** One game for the engine's follower: its moves and decks (no names), or null if it has no turns. */
+    private fun input(bytes: ByteArray, db: CardDatabase, id: String): String? {
         val raw = OmegaReplay.raw(bytes)
+        if (raw.messages.size < 2) return null  // ended before the first turn
+        val o = JSONObject().put("game", "omega-" + hash(id))
+        val msgs = JSONArray()
+        for (m in raw.messages) msgs.put(java.util.Base64.getEncoder().encodeToString(m))
+        o.put("messages", msgs)
         // the lists the replay keeps, main and Extra Deck apart (its deck codes mix them)
-        val decks = (0..1).map { p ->
-            raw.decks.getOrNull(p)?.first?.takeIf { it.isNotEmpty() }?.let { cards ->
-                val (extra, main) = cards.partition { db.find(it)?.isExtraDeck == true }
-                main to extra
+        val decks = JSONArray()
+        for (p in 0..1) {
+            val cards = raw.decks.getOrNull(p)?.first?.takeIf { it.isNotEmpty() }
+            if (cards == null) {
+                decks.put(JSONObject.NULL)
+                continue
             }
+            val (extra, main) = cards.partition { db.find(it)?.isExtraDeck == true }
+            decks.put(JSONObject().put("main", JSONArray(main)).put("extra", JSONArray(extra)))
         }
-        // only a hash of the game: it keeps a game's positions together (held out as a whole)
-        val r = engine.followReplay(raw.messages, decks, "omega-" + hash(id), PER_TURN)
-        lastVersion = r.followVersion
-        if (r.events > 0) {
-            val e = prefs.edit()
-            e.putInt(K_READ, prefs.getInt(K_READ, 0) + 1)
-            if (r.complete) e.putInt(K_COMPLETE, prefs.getInt(K_COMPLETE, 0) + 1)
-            e.putLong(K_EVENTS, prefs.getLong(K_EVENTS, 0) + r.events)
-            e.putLong(K_FOLLOWED, prefs.getLong(K_FOLLOWED, 0) + r.followed)
-            e.apply()
-        }
-        // how far it followed the game (an engine that reports where it stopped): what to fix next
-        val summary = if (r.stopTurn >= 0 && r.turns > 0) JSONObject()
-            .put("kind", "follow").put("game", "omega-" + hash(id)).put("turns", r.turns).put("turns_followed", r.turnsFollowed)
-            .put("events", r.events).put("followed", r.followed).put("complete", r.complete).put("winner", r.winner)
-            .put("stopped", r.stopped).put("stop_turn", r.stopTurn).put("stop_next", r.stopNext).toString() + "\n" else ""
-        val positions = if (r.winner == 0 || r.winner == 1) r.jsonl else ""
-        return if (positions.isEmpty() && summary.isEmpty()) "" else positions.trimEnd('\n').let { if (it.isEmpty()) it else it + "\n" } + summary
+        o.put("decks", decks)
+        return o.toString()
     }
 
-    /** How well the engine could follow the replays so far, for Settings. */
+    /** How the uploads went, for Settings. */
     fun followSummary(): String? {
-        val read = prefs.getInt(K_READ, 0)
-        if (read == 0) return null
-        val full = prefs.getInt(K_COMPLETE, 0)
-        val ev = prefs.getLong(K_EVENTS, 0)
-        val ok = prefs.getLong(K_FOLLOWED, 0)
-        val share = if (ev > 0) (100 * ok / ev).toInt() else 0
-        return "The engine re-played $full of $read game${if (read == 1) "" else "s"} to the end by the rules; " +
-            "$share% of everything the replays show was reproduced (games are kept up to where they could be followed)."
+        val n = prefs.getInt(K_UPLOADED, 0)
+        if (n == 0) return null
+        return "$n game${if (n == 1) "" else "s"} sent to the engine's learning. The engine re-plays every one by the rules " +
+            "in its nightly run, with its newest version."
     }
 
     private fun hash(s: String): String =
@@ -329,9 +243,9 @@ object LearningShare {
 
     // ---------------------------------------------------------------- GitHub
 
-    private suspend fun upload(gz: ByteArray) = withContext(Dispatchers.IO) {
+    private suspend fun upload(gz: ByteArray, kind: String = "replays") = withContext(Dispatchers.IO) {
         val release = releaseId()
-        val name = "replays-${System.currentTimeMillis()}-${hash(java.util.UUID.randomUUID().toString()).take(6)}.jsonl.gz"
+        val name = "$kind-${System.currentTimeMillis()}-${hash(java.util.UUID.randomUUID().toString()).take(6)}.jsonl.gz"
         val (code, text) = request("POST", "https://uploads.github.com/repos/$REPO/releases/$release/assets?name=$name", gz, "application/gzip")
         if (code !in 200..299) throw IllegalStateException(problem(code, text))
     }

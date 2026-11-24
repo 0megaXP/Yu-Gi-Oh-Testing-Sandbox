@@ -43,7 +43,7 @@ object LearningShare {
     private const val K_EVENTS = "events_v2"
     private const val K_FOLLOWED = "events_followed_v2"
     /** The engine in use writes start positions (games sent before it are sent once more). */
-    private const val K_STARTS = "engine_writes_starts"
+    private const val K_SUMMARY = "engine_writes_follow_summary"
     private const val K_PIECES_HASH = "app_pieces_hash"
     private const val K_POLICY_HASH = "app_policy_hash"
 
@@ -62,8 +62,8 @@ object LearningShare {
     private val prefs get() = AppPlatform.current.preferences("learning")
     // v2: the first version marked games that failed as done, without sending them
     private val file get() = File(AppPlatform.current.filesDir, "learning_sent_v2.json")
-    // v3: sent by an engine that also writes start positions
-    private val file3 get() = File(AppPlatform.current.filesDir, "learning_sent_v3.json")
+    // v4: sent by an engine that also writes how far it followed each game (and follows more)
+    private val file4 get() = File(AppPlatform.current.filesDir, "learning_sent_v4.json")
 
     /** Fine-grained GitHub token with Contents: read and write on Yu-Gi-Oh-Engine. */
     var token: String
@@ -95,13 +95,13 @@ object LearningShare {
     suspend fun send(files: List<Pair<String, ByteArray>>, db: CardDatabase, engine: suspend () -> YgoEngine): Int {
         if (!enabled || token.isBlank() || _state.value.running) return 0
         val sent = load().toMutableSet()
-        val sent3 = load(file3).toMutableSet()
-        // games sent before the engine wrote start positions are sent once more (the nightly run
-        // keeps a game's newest upload only); until the engine is known to write them, one such
-        // game per run checks whether it does
+        val sent4 = load(file4).toMutableSet()
+        // games sent before the engine wrote its follow summary are sent once more (it also
+        // follows more of them; the nightly run keeps a game's newest upload only); until the
+        // engine is known to write it, one such game per run checks whether it does
         val fresh = files.filter { (_, b) -> OmegaImport.id(b) !in sent }
-        val again = files.filter { (_, b) -> OmegaImport.id(b).let { it in sent && it !in sent3 } }
-        val todo = fresh + if (prefs.getBoolean(K_STARTS, false)) again else again.take(1)
+        val again = files.filter { (_, b) -> OmegaImport.id(b).let { it in sent && it !in sent4 } }
+        val todo = fresh + if (prefs.getBoolean(K_SUMMARY, false)) again else again.take(1)
         if (todo.isEmpty()) {
             runCatching { shareLearned() }
             return 0
@@ -119,9 +119,9 @@ object LearningShare {
             prefs.edit().putInt(K_UPLOADED, prefs.getInt(K_UPLOADED, 0) + inBatch).apply()
             sent += waiting
             save(sent)
-            if (prefs.getBoolean(K_STARTS, false)) {
-                sent3 += waiting
-                save(sent3, file3)
+            if (prefs.getBoolean(K_SUMMARY, false)) {
+                sent4 += waiting
+                save(sent4, file4)
             }
             lines.setLength(0)
             waiting.clear()
@@ -134,10 +134,10 @@ object LearningShare {
                 val id = OmegaImport.id(bytes)
                 try {
                     val positions = withContext(Dispatchers.Default) { positions(bytes, db, engine(), id) }
-                    if (positions.contains("\"kind\":\"start\"") && !prefs.getBoolean(K_STARTS, false))
-                        prefs.edit().putBoolean(K_STARTS, true).apply()
+                    if (positions.contains("\"kind\":\"follow\"") && !prefs.getBoolean(K_SUMMARY, false))
+                        prefs.edit().putBoolean(K_SUMMARY, true).apply()
                     // already sent, and this engine adds nothing new: nothing to send again
-                    val skip = id in sent && !prefs.getBoolean(K_STARTS, false)
+                    val skip = id in sent && !prefs.getBoolean(K_SUMMARY, false)
                     // a game with no winner (or that couldn't be followed) is done too: nothing to send
                     if (!skip) waiting += id
                     if (positions.isNotEmpty() && !skip) {
@@ -196,7 +196,13 @@ object LearningShare {
             e.putLong(K_FOLLOWED, prefs.getLong(K_FOLLOWED, 0) + r.followed)
             e.apply()
         }
-        return if (r.winner == 0 || r.winner == 1) r.jsonl else ""
+        // how far it followed the game (an engine that reports where it stopped): what to fix next
+        val summary = if (r.stopTurn >= 0 && r.turns > 0) JSONObject()
+            .put("kind", "follow").put("game", "omega-" + hash(id)).put("turns", r.turns).put("turns_followed", r.turnsFollowed)
+            .put("events", r.events).put("followed", r.followed).put("complete", r.complete).put("winner", r.winner)
+            .put("stopped", r.stopped).put("stop_turn", r.stopTurn).put("stop_next", r.stopNext).toString() + "\n" else ""
+        val positions = if (r.winner == 0 || r.winner == 1) r.jsonl else ""
+        return if (positions.isEmpty() && summary.isEmpty()) "" else positions.trimEnd('\n').let { if (it.isEmpty()) it else it + "\n" } + summary
     }
 
     /** How well the engine could follow the replays so far, for Settings. */

@@ -27,6 +27,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -190,11 +191,29 @@ private fun EngineLearningShare(vm: AppViewModel) {
         }) { Text("Save & send now") }
     }
     if (st.running) {
-        st.progress?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        // how long the game being re-played has taken (a stuck one stands out)
+        var now by remember { mutableStateOf(System.currentTimeMillis()) }
+        LaunchedEffect(st.gameStarted) {
+            while (true) {
+                now = System.currentTimeMillis()
+                kotlinx.coroutines.delay(1000)
+            }
+        }
+        st.progress?.let { p ->
+            val secs = if (st.gameStarted > 0) ((now - st.gameStarted) / 1000).coerceAtLeast(0) else 0
+            Text(if (secs >= 5) "$p · this game for $secs s" else p, style = MaterialTheme.typography.bodySmall)
+        }
         LinearProgressIndicator(progress = { st.fraction }, modifier = Modifier.fillMaxWidth())
     }
     Text("${st.sent} game${if (st.sent == 1) "" else "s"} sent so far" + (st.note?.let { " · $it" } ?: ""),
         style = MaterialTheme.typography.bodySmall)
+    remember(st.running) { share.skipped() }.takeIf { it.isNotEmpty() }?.let { names ->
+        Text(
+            "Skipped (the engine got stuck on ${if (names.size == 1) "this replay" else "these replays"}): " +
+                names.takeLast(5).joinToString(", ") + if (names.size > 5) " and ${names.size - 5} more" else "",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error,
+        )
+    }
     remember(st.sent, st.running, st.progress) { share.followSummary() }?.let {
         Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }

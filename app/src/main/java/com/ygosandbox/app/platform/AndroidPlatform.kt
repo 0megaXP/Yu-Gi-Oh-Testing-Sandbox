@@ -58,6 +58,24 @@ class AndroidPlatform(context: Context) : Platform {
     override fun requestInstallPermission() = AndroidUpdater.openInstallPermissionSettings(app)
     override fun installUpdate(file: File) = AndroidUpdater.install(app, file)
 
+    override suspend fun shareFile(file: File, mime: String, title: String): String? {
+        // the file goes through the app's FileProvider (cache/shared/), so other apps can read it
+        val dir = File(app.cacheDir, "shared").apply { mkdirs() }
+        val copy = if (file.parentFile == dir) file else File(dir, file.name).also { file.copyTo(it, overwrite = true) }
+        val uri = androidx.core.content.FileProvider.getUriForFile(app, "${app.packageName}.updates", copy)
+        val send = android.content.Intent(android.content.Intent.ACTION_SEND)
+            .setType(mime)
+            .putExtra(android.content.Intent.EXTRA_STREAM, uri)
+            .putExtra(android.content.Intent.EXTRA_SUBJECT, title)
+            .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        send.clipData = android.content.ClipData.newRawUri(title, uri)
+        app.startActivity(
+            android.content.Intent.createChooser(send, title)
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION),
+        )
+        return "Choose where to send ${copy.name}"
+    }
+
     override fun onWorkStarted(first: Boolean) = AndroidWork.onWorkStarted(first)
 
     override suspend fun pickFiles(title: String, startIn: File?, extensions: List<String>): List<Pair<String, ByteArray>> = AndroidFilePicker.pick()

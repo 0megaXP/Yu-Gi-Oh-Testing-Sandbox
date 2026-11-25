@@ -32,6 +32,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Stop
@@ -225,6 +226,8 @@ internal fun DuelBoardScreen(
     val colors = playerColors(d.bottom)
     // Places with a card still flying in: they keep their old look until it lands.
     val pending = remember(d.moveBatch) { Pending.of(d.moves) }
+    // Whose hidden cards the viewer may look at.
+    val canSee: (Int) -> Boolean = { p -> reveal || p == d.human }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
     val wide = maxWidth >= 1000.dp && maxHeight >= 560.dp
@@ -238,6 +241,8 @@ internal fun DuelBoardScreen(
                 }
                 if (d.paused) IconButton(onClick = { vm.stepDuel() }) { Icon(Icons.Default.SkipNext, "One bot move") }
             }
+            if (actions == null && d.replaySetup != null)
+                IconButton(onClick = { vm.saveDuelReplay() }) { Icon(Icons.Default.Share, "Save replay") }
             if (actions == null) IconButton(onClick = { vm.stopDuel() }) { Icon(Icons.Default.Stop, "End duel") }
         }
         if (s == null) {
@@ -252,7 +257,7 @@ internal fun DuelBoardScreen(
         val board: @Composable (slot: Dp, hand: Int) -> Unit = { slot, hand ->
             PlayerBar(d.names[top], s.players[top], colors.of(top), active = s.turnPlayer == top)
             HandRow(vm, s.players[top].hand, top, spots, pending, faceUp = reveal, onOpen, hand, upsideDown = true)
-            Spacer(Modifier.height(4.dp))
+            PhaseBar(s, d.names, colors, d.human, Modifier.padding(vertical = 4.dp))
             Mat(vm, s, d.bottom, spots, pending, reveal, onOpen, onPile = { t, l -> pile = t to l }, names = d.names, maxSlot = slot)
             Spacer(Modifier.height(4.dp))
             HandRow(vm, s.players[d.bottom].hand, d.bottom, spots, pending, faceUp = d.human >= 0 || reveal, onOpen, hand)
@@ -275,7 +280,12 @@ internal fun DuelBoardScreen(
                     LogPanel(d.log, d.names, colors, open = true, onToggle = {}, fill = true, modifier = Modifier.weight(1f))
                     Spacer(Modifier.height(8.dp))
                     Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, tonalElevation = 3.dp, shape = RoundedCornerShape(12.dp)) {
-                        if (controls != null) Column(Modifier.fillMaxWidth().padding(12.dp)) { controls(s) } else BottomPanel(d, s, vm)
+                        Column(Modifier.heightIn(max = 640.dp).verticalScroll(rememberScrollState())) {
+                            if (s.chain.isNotEmpty()) Box(Modifier.padding(start = 12.dp, end = 12.dp, top = 12.dp)) {
+                                ChainPanel(s, vm, colors, d.bottom, canSee, onOpen)
+                            }
+                            if (controls != null) Column(Modifier.fillMaxWidth().padding(12.dp)) { controls(s) } else BottomPanel(d, s, vm)
+                        }
                     }
                 }
             }
@@ -288,12 +298,18 @@ internal fun DuelBoardScreen(
 
             // Bottom panel: game over, the person's decision, or what the bot is doing.
             Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, tonalElevation = 3.dp) {
-                if (controls != null) Column(Modifier.fillMaxWidth().padding(12.dp)) { controls(s) } else BottomPanel(d, s, vm)
+                Column {
+                    if (s.chain.isNotEmpty()) Box(Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState()).padding(start = 12.dp, end = 12.dp, top = 10.dp)) {
+                        ChainPanel(s, vm, colors, d.bottom, canSee, onOpen)
+                    }
+                    if (controls != null) Column(Modifier.fillMaxWidth().padding(12.dp)) { controls(s) } else BottomPanel(d, s, vm)
+                }
             }
         }
     }
-    // Cards flying between zones, drawn above the board.
-    MoveOverlay(d, vm, spots, pending, colors, canSee = { p -> reveal || p == d.human })
+    // The chain on the board (badges, target rings, arrows), then cards flying between zones above it.
+    if (s != null) ChainOverlay(s, spots, colors)
+    MoveOverlay(d, vm, spots, pending, colors, canSee = canSee)
     }
 
     pile?.let { (title, cards) ->
@@ -338,14 +354,22 @@ private val MAT_GAP = 3.dp
 
 @Composable
 private fun PlayerBar(name: String, p: PlayerState, color: Color, active: Boolean) {
+    // The turn player's bar is lit in their colour, with a "TURN" tag.
     Row(
-        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        Modifier.fillMaxWidth().padding(vertical = 2.dp).clip(RoundedCornerShape(8.dp))
+            .background(if (active) color.copy(alpha = 0.14f) else Color.Transparent)
+            .then(if (active) Modifier.border(1.dp, color.copy(alpha = 0.6f), RoundedCornerShape(8.dp)) else Modifier)
+            .padding(horizontal = 8.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Box(Modifier.size(10.dp).clip(RoundedCornerShape(5.dp)).background(color))
+        if (active) Text(
+            "TURN", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold,
+            modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(color).padding(horizontal = 5.dp, vertical = 1.dp),
+        )
         Text(
-            name + if (active) " · turn" else "", fontWeight = if (active) FontWeight.Bold else FontWeight.Medium, maxLines = 1,
+            name, fontWeight = if (active) FontWeight.Bold else FontWeight.Medium, maxLines = 1,
             overflow = TextOverflow.Ellipsis, color = color, modifier = Modifier.weight(1f),
         )
         Text(
@@ -739,6 +763,7 @@ private fun GameOver(d: DuelUi, s: DuelState, vm: AppViewModel) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Button(onClick = { vm.startDuel() }) { Text("Rematch") }
         OutlinedButton(onClick = { vm.stopDuel() }) { Text("Change setup") }
+        if (d.replaySetup != null) TextButton(onClick = { vm.saveDuelReplay() }) { Text("Save replay") }
     }
 }
 
@@ -869,6 +894,7 @@ private fun MoveOverlay(
 ) {
     val flights = remember { mutableStateListOf<Flight>() }
     val effects = remember { mutableStateListOf<ActivationFx>() }
+    val pickFx = remember { mutableStateListOf<PickFx>() }
     // Activations still showing from the previous update: new ones wait for them instead of cutting them off.
     var busyUntil by remember { mutableStateOf(0L) }
     var origin by remember { mutableStateOf(Offset.Zero) }
@@ -885,8 +911,19 @@ private fun MoveOverlay(
             effects += ActivationFx(nextId++, a.code, a.place.player, spots.find(a.place), wait + start,
                 upsideDown = a.place.player != d.bottom)
         }
+        // Targets flash when their chain is already over by the time this update is shown (the
+        // chain still on the board shows them itself): after the activation before them.
+        var picksEnd = 0L
+        if (d.state?.chain.isNullOrEmpty()) d.picks.takeLast(MAX_FLIGHTS).forEach { p ->
+            val before = times.activations.lastOrNull { it.first.afterMoves <= p.afterMoves }?.second
+            val start = if (before != null) before + (ACTIVATION_MS * 0.6).toLong() else 0L
+            // whose effect it is: the player who activated that card, else the other side's
+            val player = d.activations.lastOrNull { it.code == p.source }?.place?.player ?: (1 - p.place.player)
+            pickFx += PickFx(nextId++, spots.find(p.place), player, wait + start, p.target)
+            picksEnd = maxOf(picksEnd, start + PICK_MS)
+        }
         // Tell the duel when this update's animations are over, so the next bot move waits for them.
-        val end = wait + times.endMs + PRELOAD_SLACK_MS
+        val end = wait + maxOf(times.endMs, picksEnd) + PRELOAD_SLACK_MS
         busyUntil = now + wait + (times.activations.maxOfOrNull { it.second + ACTIVATION_MS } ?: 0L)
         vm.duelAnimationsUntil = now + end
         plan(d.moves).forEachIndexed { i, p ->
@@ -909,6 +946,9 @@ private fun MoveOverlay(
                     flights.remove(f)
                 }
             }
+        }
+        pickFx.toList().forEach { fx ->
+            key(fx.id) { PickEffect(fx, origin, colors.of(fx.player)) { pickFx.remove(fx) } }
         }
         effects.toList().forEach { fx ->
             key(fx.id) { ActivationEffect(fx, origin, colors.of(fx.player), vm, spots.area("mat")) { effects.remove(fx) } }

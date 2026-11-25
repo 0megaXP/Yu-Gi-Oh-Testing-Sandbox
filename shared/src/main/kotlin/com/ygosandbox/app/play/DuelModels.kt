@@ -44,8 +44,15 @@ data class DuelUi(
     val moves: List<DuelMove> = emptyList(),
     /** Cards and effects activated in the latest update, for the activation effect. */
     val activations: List<DuelActivation> = emptyList(),
-    /** Goes up with every update that has moves or activations, so the board knows to animate them. */
+    /** Cards targeted or picked by effects in the latest update, for the target effect. */
+    val picks: List<com.ygoengine.DuelPick> = emptyList(),
+    /** Goes up with every update that has moves, activations or picks, so the board knows to animate them. */
     val moveBatch: Int = 0,
+    /** For saving the duel as a replay: the engine's setup (null with an engine that can't) and every answer so far. */
+    val replaySetup: String? = null,
+    val replayAnswers: List<String> = emptyList(),
+    /** The whole log as the engine wrote it ("[P0]"/"[P1]"), for the replay file. */
+    val rawLog: List<String> = emptyList(),
     val paused: Boolean = false,
     val thinking: Boolean = false,
     val error: String? = null,

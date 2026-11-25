@@ -190,6 +190,21 @@ class DesktopPlatform(private val resources: File?) : Platform {
         picked.filter { it.isFile }.map { it.name to it.readBytes() }
     }
 
+    override suspend fun shareFile(file: File, mime: String, title: String): String? = withContext(Dispatchers.IO) {
+        val docs = System.getProperty("user.home")?.let { File(it, "Documents") }?.takeIf { it.isDirectory }
+        val chooser = javax.swing.JFileChooser(docs).apply {
+            dialogTitle = title
+            selectedFile = File(docs ?: File("."), file.name)
+        }
+        var picked: File? = null
+        javax.swing.SwingUtilities.invokeAndWait {
+            if (chooser.showSaveDialog(null) == javax.swing.JFileChooser.APPROVE_OPTION) picked = chooser.selectedFile
+        }
+        val to = picked ?: return@withContext null
+        file.copyTo(to, overwrite = true)
+        "Saved ${to.name} in ${to.parentFile?.path ?: "the folder"}"
+    }
+
     /** Frame decoding and text recognition aren't on the desktop yet (the phone app has them). */
     override val video: VideoPlatform? = null
 }

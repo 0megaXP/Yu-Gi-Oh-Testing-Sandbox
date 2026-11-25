@@ -1,5 +1,6 @@
 package com.ygosandbox.app
 
+import com.ygosandbox.app.platform.AppPlatform
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ygosandbox.app.data.Banlists
@@ -664,6 +665,7 @@ class AppViewModel : ViewModel() {
                 active = true, starting = true, state = null, bottom = bottom,
                 human = if (humanMode) bottom else -1, names = names, levels = levels,
                 log = listOf(LogEntry(0, "${names[0]} goes first.")), moves = emptyList(), paused = false, thinking = false, error = null,
+                replaySetup = null, replayAnswers = emptyList(), rawLog = emptyList(),
             )
         }
         CrashReports.note(
@@ -712,9 +714,13 @@ class AppViewModel : ViewModel() {
             d.copy(
                 state = s,
                 log = (d.log + lines).takeLast(600),
+                replaySetup = d.replaySetup ?: s.record?.setup,
+                replayAnswers = if (s.record == null) d.replayAnswers else d.replayAnswers + s.record!!.responses,
+                rawLog = d.rawLog + s.log,
                 moves = s.moves,
                 activations = s.activations,
-                moveBatch = if (s.moves.isEmpty() && s.activations.isEmpty()) d.moveBatch else d.moveBatch + 1,
+                picks = s.picks,
+                moveBatch = if (s.moves.isEmpty() && s.activations.isEmpty() && s.picks.isEmpty()) d.moveBatch else d.moveBatch + 1,
             )
         }
     }
@@ -763,6 +769,46 @@ class AppViewModel : ViewModel() {
                 }
             }
             publishDuelState(duel)
+        }
+    }
+
+    /**
+     * Saves the duel so far as a replay file (the decks, the shuffle, every answer, and the log)
+     * and hands it to the person to send or keep. The engine rebuilds it with
+     * `ygoe-cli simreplay <file>`.
+     */
+    fun saveDuelReplay() {
+        val d = _ui.value.duel
+        val setup = d.replaySetup ?: run {
+            showMessage("This engine can't save replays yet: update the engine (Settings) and start a new duel")
+            return
+        }
+        viewModelScope.launch {
+            val result = runCatching {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val s = d.state
+                    val o = org.json.JSONObject()
+                        .put("format", "ygo-sandbox-replay").put("version", 1)
+                        .put("saved", java.time.OffsetDateTime.now().toString())
+                        .put("app", AppPlatform.current.versionName)
+                        .put("engine", runCatching { com.ygoengine.YgoEngine.nativeVersion()?.first }.getOrNull() ?: "")
+                        .put("mode", d.setup.mode.name)
+                        .put("names", org.json.JSONArray(d.names))
+                        .put("levels", org.json.JSONArray(d.levels.map { it.name }))
+                        .put("human", d.human).put("bottom", d.bottom)
+                        .put("turn", s?.turn ?: 0).put("phase", s?.phase ?: "")
+                        .put("lp", org.json.JSONArray(s?.players?.map { it.lp } ?: emptyList<Int>()))
+                        .put("winner", s?.winner ?: -1)
+                        .put("setup", org.json.JSONObject(setup))
+                        .put("responses", org.json.JSONArray(d.replayAnswers))
+                        .put("log", org.json.JSONArray(d.rawLog.map { it.replace("[P0]", d.names[0]).replace("[P1]", d.names[1]) }))
+                    val stamp = java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd_HHmm"))
+                    val dir = java.io.File(AppPlatform.current.cacheDir, "shared").apply { mkdirs() }
+                    java.io.File(dir, "ygo-duel-$stamp.json").apply { writeText(o.toString(1)) }
+                }
+            }.mapCatching { file -> AppPlatform.current.shareFile(file, "application/json", "Duel replay") }
+            result.onSuccess { msg -> msg?.let(::showMessage) }
+                .onFailure { showMessage("Couldn't save the replay: ${it.message ?: it}") }
         }
     }
 

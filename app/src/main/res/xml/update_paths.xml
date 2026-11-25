@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <cache-path name="updates" path="updates/" />
+    <!-- Files the person shares from the app (duel replays). -->
+    <cache-path name="shared" path="shared/" />
 </paths>

@@ -79,6 +79,13 @@ interface Platform {
      */
     suspend fun pickFolder(title: String, startIn: String? = null): String? = null
 
+    /**
+     * Hands a file the app made to the person: the phone's share sheet (send it to an app, save it
+     * to Files), a save dialog on a computer. Returns what happened, for a message, or null when
+     * they cancel.
+     */
+    suspend fun shareFile(file: File, mime: String, title: String): String? = null
+
     /** Whether a folder can also be typed or pasted as a path (computers; phones only grant folders by picking). */
     val canTypeFolder: Boolean get() = false
 

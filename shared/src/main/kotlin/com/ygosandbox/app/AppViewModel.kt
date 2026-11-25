@@ -58,6 +58,8 @@ sealed interface Screen {
     /** One game of the match history, replayed move by move. */
     data class ReplayViewer(val gameId: String) : Screen
     data object Settings : Screen
+    /** A deck learning on this computer (Windows). */
+    data object Learn : Screen
 }
 
 enum class DbStatus { LOADING, MISSING, READY, DOWNLOADING, ERROR }
@@ -85,6 +87,8 @@ data class UiState(
     val play: PlayState = PlayState(),
     /** Duel simulator. */
     val duel: DuelUi = DuelUi(),
+    /** Deck learning (Windows). */
+    val learn: com.ygosandbox.app.play.LearnUi = com.ygosandbox.app.play.LearnUi(),
 ) {
     val screen: Screen get() = stack.last()
 }
@@ -688,6 +692,8 @@ class AppViewModel : ViewModel() {
                     knowledge = if (deck1First) listOf(deckKnowledge(d1), deckKnowledge(d2)) else listOf(deckKnowledge(d2), deckKnowledge(d1)),
                     // replay choices the engine doesn't understand yet, followed by each bot
                     imitate = if (deck1First) listOf(imitations(d1), imitations(d2)) else listOf(imitations(d2), imitations(d1)),
+                    // a deck that learned on this computer plays with what it learned
+                    learned = if (deck1First) listOf(learnedDir(d1), learnedDir(d2)) else listOf(learnedDir(d2), learnedDir(d1)),
                 )
                 liveDuel = duel
                 publishDuelState(duel)
@@ -868,5 +874,91 @@ class AppViewModel : ViewModel() {
     }
 
     fun showMessage(text: String) = _ui.update { it.copy(message = text) }
+
+    // ---------- Deck learning (Windows) ----------
+
+    private fun updateLearn(change: (com.ygosandbox.app.play.LearnUi) -> com.ygosandbox.app.play.LearnUi) =
+        _ui.update { it.copy(learn = change(it.learn)) }
+
+    private var learnJob: Job? = null
+    private var learnEngine: com.ygoengine.YgoEngine? = null
+
+    /** Deck learning runs on the Windows app (a phone would get hot and drain its battery). */
+    val canLearn: Boolean get() = AppPlatform.current.name == "Windows"
+
+    /** Where a deck's learning lives on this computer. */
+    fun learnFolder(key: String): java.io.File =
+        java.io.File(java.io.File(AppPlatform.current.filesDir, "learn"), key.replace(Regex("[^A-Za-z0-9._-]"), "_"))
+
+    /** The folder a duel's bot reads the deck's learning from, when it has learned something. */
+    private fun learnedDir(choice: DeckChoice): java.io.File? =
+        learnFolder(choice.key).takeIf { com.ygoengine.LearnStatus.read(it).learned }
+
+    fun refreshLearnStatuses() {
+        viewModelScope.launch {
+            val map = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                playDeckChoices().associate { it.key to com.ygoengine.LearnStatus.read(learnFolder(it.key)) }
+                    .filterValues { it.games > 0 || it.learned }
+            }
+            updateLearn { it.copy(statuses = map) }
+        }
+    }
+
+    fun setLearnDeck(key: String?) = updateLearn { it.copy(deckKey = key, opponents = it.opponents - setOfNotNull(key), error = null) }
+    fun toggleLearnOpponent(key: String) = updateLearn {
+        it.copy(opponents = if (key in it.opponents) it.opponents - key else it.opponents + key)
+    }
+    fun clearLearnOpponents() = updateLearn { it.copy(opponents = emptySet()) }
+    fun setLearnMinutes(m: Int) = updateLearn { it.copy(minutes = m.coerceIn(10, 24 * 60)) }
+
+    fun startLearning() {
+        val l = _ui.value.learn
+        if (l.running != null) return
+        val deck = deckChoice(l.deckKey) ?: run { updateLearn { it.copy(error = "Pick the deck to learn") }; return }
+        val opponents = l.opponents.mapNotNull { deckChoice(it) }
+        updateLearn { it.copy(running = deck.key, stopping = false, progress = null, error = null, lastReport = null, startedAt = System.currentTimeMillis()) }
+        CrashReports.note("Learning: ${deck.name} for ${l.minutes} min against ${if (opponents.isEmpty()) "the format's decks" else opponents.joinToString { it.name }}")
+        learnJob = viewModelScope.launch {
+            var engine: com.ygoengine.YgoEngine? = null
+            try {
+                // an engine of its own: duels and the rest of the app keep theirs
+                engine = AppPlatform.current.openEngine()
+                learnEngine = engine
+                val report = engine.learnDeck(
+                    deck.toEngine(::cardName),
+                    learnFolder(deck.key).apply { mkdirs() },
+                    minutes = l.minutes.toDouble(),
+                    opponents = opponents.map { it.toEngine(::cardName) },
+                    library = pieceLibrary(deck),
+                ) { p -> updateLearn { it.copy(progress = p) } }
+                updateLearn { it.copy(lastReport = report) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                CrashReports.note("Learning stopped by an error: $e")
+                updateLearn { it.copy(error = e.message ?: e.toString()) }
+            } finally {
+                learnEngine = null
+                engine?.close()
+                updateLearn { it.copy(running = null, stopping = false, progress = null) }
+                refreshLearnStatuses()
+            }
+        }
+    }
+
+    /** Stops after the game being played; what was learned in finished rounds is kept. */
+    fun stopLearning() {
+        updateLearn { it.copy(stopping = true) }
+        learnEngine?.cancel()
+    }
+
+    /** Forgets what a deck learned on this computer (its bots go back to the format's learning). */
+    fun forgetLearning(key: String) {
+        if (_ui.value.learn.running == key) return
+        viewModelScope.launch {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { learnFolder(key).deleteRecursively() }
+            refreshLearnStatuses()
+        }
+    }
     fun dismissMessage() = _ui.update { it.copy(message = null) }
 }

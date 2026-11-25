@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Style
 import androidx.compose.material.icons.filled.ViewCarousel
 import androidx.compose.material3.Button
@@ -95,6 +96,7 @@ fun SandboxApp(vm: AppViewModel) {
                     Screen.Settings -> SettingsScreen(ui, vm)
                     Screen.MatchHistory -> MatchHistoryScreen(ui, vm)
                     is Screen.ReplayViewer -> ReplayViewerScreen(vm, s.gameId)
+                    Screen.Learn -> LearnScreen(ui, vm)
                 }
                 }
                 }
@@ -163,16 +165,25 @@ private fun MainMenu(ui: UiState, vm: AppViewModel) {
                 modifier = m,
             ) { vm.open(Screen.MatchHistory) } },
             { m -> MenuTile(
+                Icons.Default.School, "Deck learning",
+                ui.learn.running?.let { k -> "Learning ${vm.deckChoice(k)?.name ?: "a deck"} now" }
+                    ?: "Let the engine learn one of your decks on this computer",
+                badge = { TestBadge() },
+                modifier = m,
+            ) { vm.open(Screen.Learn) } },
+            { m -> MenuTile(
                 Icons.Default.Style, "Card database",
                 if (ui.cardCount > 0) "Browse ${ui.cardCount} cards and archetypes" else "Available once downloaded",
                 modifier = m,
             ) { vm.open(Screen.Cards) } },
         )
+        // Deck learning is on the Windows app only.
+        val shown = if (vm.canLearn) tiles else tiles.filterIndexed { i, _ -> i != tiles.size - 2 }
         // Two columns of tiles on a wide window, one on the phone.
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val perRow = if (maxWidth >= 640.dp) 2 else 1
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                tiles.chunked(perRow).forEach { row ->
+                shown.chunked(perRow).forEach { row ->
                     Row(horizontalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.height(IntrinsicSize.Min)) {
                         row.forEach { it(Modifier.weight(1f).fillMaxHeight()) }
                         repeat(perRow - row.size) { Spacer(Modifier.weight(1f)) }

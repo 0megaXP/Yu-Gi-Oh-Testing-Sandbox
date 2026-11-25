@@ -181,6 +181,104 @@ object LearningShare {
         return o.toString()
     }
 
+    /**
+     * The games a deck's learning played on this computer (engine learn.h, Windows): their
+     * positions and policy examples not sent yet, uploaded as local-pos-* / local-pol-*.jsonl.gz
+     * to the ml-data release, where the nightly run learns from them as from its own self-play.
+     * Numbers and the engine's feature ids only: no deck names, players or accounts. Returns how
+     * many games were sent; nothing happens without a token or when sharing is switched off.
+     */
+    suspend fun sendLocal(dir: File, skipLatest: Boolean = false): Int = withContext(Dispatchers.IO) {
+        if (!enabled || token.isBlank()) return@withContext 0
+        val sentFile = File(dir, "uploaded_games.json")
+        val sent = load(sentFile).toMutableSet()
+        fun read(name: String, key: String): List<Pair<String, JSONObject>> {
+            val f = File(dir, name)
+            if (!f.isFile) return emptyList()
+            return f.readLines().mapNotNull { l ->
+                runCatching { JSONObject(l) }.getOrNull()?.let { o -> o.optString(key).takeIf { it.isNotEmpty() }?.let { it to o } }
+            }
+        }
+        val pos = read("positions.jsonl", "game")
+        val pol = read("policy_examples.jsonl", "g")
+        // while a session is writing, the game it wrote last may still be coming in: it goes next time
+        val games = pos.map { it.first }.distinct().let { if (skipLatest) it.dropLast(1) else it }
+        val fresh = games.toSet() - sent
+        if (fresh.isEmpty()) return@withContext 0
+        // game ids marked as the app's local games (apart from the nightly runs' own)
+        suspend fun send(lines: List<Pair<String, JSONObject>>, key: String, kind: String) {
+            val out = StringBuilder()
+            for ((g, o) in lines) {
+                if (g !in fresh) continue
+                o.put(key, "local-$g")
+                if (kind == "local-pos") o.put("src", "local")
+                out.append(o.toString()).append('\n')
+                if (out.length > MAX_BYTES) {
+                    upload(gzip(out.toString().toByteArray()), kind)
+                    out.setLength(0)
+                }
+            }
+            if (out.isNotEmpty()) upload(gzip(out.toString().toByteArray()), kind)
+        }
+        send(pos, "game", "local-pos")
+        send(pol, "g", "local-pol")
+        sent += fresh
+        save(sent, sentFile)
+        fresh.size
+    }
+
+    /**
+     * The combo lines "Deepen combo lines" found on this computer ([dir]/newpieces/*.json, one
+     * file per batch of opening hands): uploaded as local-newpieces-*.json to ml-data, where the
+     * nightly run merges them into the format's shared pool of pieces; each file is removed here
+     * once sent. Returns how many files were sent.
+     */
+    suspend fun sendLines(dir: File): Int = withContext(Dispatchers.IO) {
+        if (!enabled || token.isBlank()) return@withContext 0
+        val files = File(dir, "newpieces").listFiles { f -> f.isFile && f.name.endsWith(".json") }?.sortedBy { it.name } ?: return@withContext 0
+        var n = 0
+        for (f in files) {
+            val text = runCatching { f.readText() }.getOrNull() ?: continue
+            if (runCatching { JSONObject(text) }.isFailure) continue  // still being written
+            val release = releaseId()
+            val name = "local-newpieces-${System.currentTimeMillis()}-${hash(f.name + text.length).take(6)}.json"
+            val (code, body) = request("POST", "https://uploads.github.com/repos/$REPO/releases/$release/assets?name=$name",
+                text.toByteArray(), "application/json")
+            if (code !in 200..299) throw IllegalStateException(problem(code, body))
+            f.delete()
+            n++
+        }
+        n
+    }
+
+    /**
+     * The format's shared pool of combo pieces (combo-pool.json in ml-data, public), its "pieces"
+     * array as JSON: the nightly bots play their lines from it, and so do the computer's when they
+     * play the format's games. Fetched at most every 6 hours (kept in [cache]); null when it can't be read.
+     */
+    suspend fun comboPool(cache: File): String? = withContext(Dispatchers.IO) {
+        val fresh = cache.isFile && System.currentTimeMillis() - cache.lastModified() < 6 * 3600_000L
+        if (!fresh) runCatching {
+            val conn = URL("https://github.com/$REPO/releases/download/$TAG/combo-pool.json").openConnection() as HttpURLConnection
+            conn.instanceFollowRedirects = true
+            conn.connectTimeout = 20_000
+            conn.readTimeout = 120_000
+            conn.setRequestProperty("User-Agent", "YGOSandbox")
+            try {
+                if (conn.responseCode in 200..299) {
+                    val text = conn.inputStream.bufferedReader().use { it.readText() }
+                    cache.parentFile?.mkdirs()
+                    val tmp = File(cache.parentFile, cache.name + ".tmp")
+                    tmp.writeText(text)
+                    com.ygosandbox.app.platform.replaceFile(tmp, cache)
+                }
+            } finally {
+                conn.disconnect()
+            }
+        }
+        runCatching { JSONObject(cache.readText()).optJSONArray("pieces")?.toString() }.getOrNull()
+    }
+
     /** How the uploads went, for Settings. */
     fun followSummary(): String? {
         val n = prefs.getInt(K_UPLOADED, 0)

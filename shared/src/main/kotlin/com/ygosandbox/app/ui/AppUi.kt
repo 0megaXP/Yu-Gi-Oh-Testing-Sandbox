@@ -165,9 +165,9 @@ private fun MainMenu(ui: UiState, vm: AppViewModel) {
                 modifier = m,
             ) { vm.open(Screen.MatchHistory) } },
             { m -> MenuTile(
-                Icons.Default.School, "Deck learning",
-                ui.learn.running?.let { k -> "Learning ${vm.deckChoice(k)?.name ?: "a deck"} now" }
-                    ?: "Let the engine learn one of your decks on this computer",
+                Icons.Default.School, "Engine training",
+                ui.learn.runningMode?.let { m -> "${m.title}: running now" }
+                    ?: "Let this computer play and search for the engine's learning",
                 badge = { TestBadge() },
                 modifier = m,
             ) { vm.open(Screen.Learn) } },

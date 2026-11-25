@@ -875,7 +875,7 @@ class AppViewModel : ViewModel() {
 
     fun showMessage(text: String) = _ui.update { it.copy(message = text) }
 
-    // ---------- Deck learning (Windows) ----------
+    // ---------- Engine training on this computer (Windows) ----------
 
     private fun updateLearn(change: (com.ygosandbox.app.play.LearnUi) -> com.ygosandbox.app.play.LearnUi) =
         _ui.update { it.copy(learn = change(it.learn)) }
@@ -883,70 +883,151 @@ class AppViewModel : ViewModel() {
     private var learnJob: Job? = null
     private var learnEngine: com.ygoengine.YgoEngine? = null
 
-    /** Deck learning runs on the Windows app (a phone would get hot and drain its battery). */
+    /** Training runs on the Windows app (a phone would get hot and drain its battery). */
     val canLearn: Boolean get() = AppPlatform.current.name == "Windows"
 
-    /** Where a deck's learning lives on this computer. */
-    fun learnFolder(key: String): java.io.File =
-        java.io.File(java.io.File(AppPlatform.current.filesDir, "learn"), key.replace(Regex("[^A-Za-z0-9._-]"), "_"))
+    private val learnRoot get() = java.io.File(AppPlatform.current.filesDir, "learn")
+
+    /** Where a session's files live on this computer: a deck's learning, or the format's games / combo lines. */
+    fun learnFolder(key: String): java.io.File = java.io.File(learnRoot, key.replace(Regex("[^A-Za-z0-9._-]"), "_"))
 
     /** The folder a duel's bot reads the deck's learning from, when it has learned something. */
     private fun learnedDir(choice: DeckChoice): java.io.File? =
         learnFolder(choice.key).takeIf { com.ygoengine.LearnStatus.read(it).learned }
 
     fun refreshLearnStatuses() {
+        // work of earlier sessions not sent yet (no token then, offline, or the app closed mid-session)
+        if (_ui.value.learn.running == null) viewModelScope.launch { shareAll() }
         viewModelScope.launch {
-            val map = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                playDeckChoices().associate { it.key to com.ygoengine.LearnStatus.read(learnFolder(it.key)) }
+            val l = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val map = playDeckChoices().associate { it.key to com.ygoengine.LearnStatus.read(learnFolder(it.key)) }
                     .filterValues { it.games > 0 || it.learned }
+                fun counter(key: String, field: String) = runCatching {
+                    org.json.JSONObject(java.io.File(learnFolder(key), "status.json").readText()).optLong(field)
+                }.getOrDefault(0L)
+                Triple(map, counter(com.ygosandbox.app.play.LearnUi.FORMAT_KEY, "games"),
+                    counter(com.ygosandbox.app.play.LearnUi.DEEPEN_KEY, "hands") to counter(com.ygosandbox.app.play.LearnUi.DEEPEN_KEY, "pieces"))
             }
-            updateLearn { it.copy(statuses = map) }
+            updateLearn { it.copy(statuses = l.first, formatGames = l.second, deepenHands = l.third.first, deepenPieces = l.third.second) }
         }
     }
 
+    fun setTrainMode(m: com.ygosandbox.app.play.TrainMode) = updateLearn { it.copy(mode = m, error = null) }
     fun setLearnDeck(key: String?) = updateLearn { it.copy(deckKey = key, opponents = it.opponents - setOfNotNull(key), error = null) }
     fun toggleLearnOpponent(key: String) = updateLearn {
         it.copy(opponents = if (key in it.opponents) it.opponents - key else it.opponents + key)
     }
-    fun clearLearnOpponents() = updateLearn { it.copy(opponents = emptySet()) }
+    fun toggleDeepenDeck(key: String) = updateLearn {
+        it.copy(deepenDecks = if (key in it.deepenDecks) it.deepenDecks - key else it.deepenDecks + key)
+    }
+    fun setTrainDepth(n: Int) = updateLearn { it.copy(depth = n) }
     fun setLearnMinutes(m: Int) = updateLearn { it.copy(minutes = m.coerceIn(10, 24 * 60)) }
 
+    /** Starts the session of the chosen mode. */
     fun startLearning() {
         val l = _ui.value.learn
         if (l.running != null) return
-        val deck = deckChoice(l.deckKey) ?: run { updateLearn { it.copy(error = "Pick the deck to learn") }; return }
-        val opponents = l.opponents.mapNotNull { deckChoice(it) }
-        updateLearn { it.copy(running = deck.key, stopping = false, progress = null, error = null, lastReport = null, startedAt = System.currentTimeMillis()) }
-        CrashReports.note("Learning: ${deck.name} for ${l.minutes} min against ${if (opponents.isEmpty()) "the format's decks" else opponents.joinToString { it.name }}")
-        learnJob = viewModelScope.launch {
-            var engine: com.ygoengine.YgoEngine? = null
-            try {
-                // an engine of its own: duels and the rest of the app keep theirs
-                engine = AppPlatform.current.openEngine()
-                learnEngine = engine
-                val report = engine.learnDeck(
-                    deck.toEngine(::cardName),
-                    learnFolder(deck.key).apply { mkdirs() },
-                    minutes = l.minutes.toDouble(),
-                    opponents = opponents.map { it.toEngine(::cardName) },
-                    library = pieceLibrary(deck),
-                ) { p -> updateLearn { it.copy(progress = p) } }
-                updateLearn { it.copy(lastReport = report) }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                CrashReports.note("Learning stopped by an error: $e")
-                updateLearn { it.copy(error = e.message ?: e.toString()) }
-            } finally {
-                learnEngine = null
-                engine?.close()
-                updateLearn { it.copy(running = null, stopping = false, progress = null) }
-                refreshLearnStatuses()
+        when (l.mode) {
+            com.ygosandbox.app.play.TrainMode.DECK -> {
+                val deck = deckChoice(l.deckKey) ?: run { updateLearn { it.copy(error = "Pick the deck to learn") }; return }
+                val opponents = l.opponents.mapNotNull { deckChoice(it) }
+                CrashReports.note("Learning: ${deck.name} for ${l.minutes} min against ${if (opponents.isEmpty()) "the format's decks" else opponents.joinToString { it.name }}")
+                runSession(deck.key, l.mode) { engine, dir, onProgress ->
+                    val report = engine.learnDeck(
+                        deck.toEngine(::cardName), dir, minutes = l.minutes.toDouble(),
+                        opponents = opponents.map { it.toEngine(::cardName) }, library = pieceLibrary(deck), onProgress = onProgress,
+                    )
+                    updateLearn { it.copy(lastReport = report) }
+                }
+            }
+            com.ygosandbox.app.play.TrainMode.FORMAT -> {
+                CrashReports.note("Training: the format's games for ${l.minutes} min at ${l.depth} iterations")
+                runSession(com.ygosandbox.app.play.LearnUi.FORMAT_KEY, l.mode) { engine, dir, onProgress ->
+                    // the shared pool of combo pieces, so the bots play the lines the nightly bots do
+                    val pool = com.ygosandbox.app.history.LearningShare.comboPool(java.io.File(learnRoot, "combo-pool.json"))
+                    val r = engine.contributeGames(dir, l.minutes.toDouble(), iterations = l.depth, pool = pool, onProgress = onProgress)
+                    updateLearn { it.copy(lastSession = "Last session: ${r.games} games of the format's decks" + if (r.cancelled) ", stopped early." else ".") }
+                }
+            }
+            com.ygosandbox.app.play.TrainMode.DEEPEN -> {
+                val decks = l.deepenDecks.mapNotNull { deckChoice(it) }
+                CrashReports.note("Training: deeper combo lines for ${l.minutes} min of ${if (decks.isEmpty()) "the format's decks" else decks.joinToString { it.name }}")
+                runSession(com.ygosandbox.app.play.LearnUi.DEEPEN_KEY, l.mode) { engine, dir, onProgress ->
+                    val r = engine.deepenLines(dir, l.minutes.toDouble(), decks = decks.map { it.toEngine(::cardName) }, onProgress = onProgress)
+                    updateLearn {
+                        it.copy(lastSession = "Last session: ${r.hands} opening hands searched, ${r.pieces} combo pieces found" +
+                            if (r.cancelled) ", stopped early." else ".")
+                    }
+                }
             }
         }
     }
 
-    /** Stops after the game being played; what was learned in finished rounds is kept. */
+    /**
+     * A training session on an engine of its own (duels and the rest of the app keep theirs).
+     * Every 15 minutes, and when it ends, what it saved is sent to the engine's nightly learning.
+     */
+    private fun runSession(
+        key: String,
+        mode: com.ygosandbox.app.play.TrainMode,
+        work: suspend (com.ygoengine.YgoEngine, java.io.File, (com.ygoengine.Progress) -> Unit) -> Unit,
+    ) {
+        updateLearn {
+            it.copy(running = key, runningMode = mode, stopping = false, progress = null, error = null, lastReport = null,
+                lastSession = null, startedAt = System.currentTimeMillis())
+        }
+        learnJob = viewModelScope.launch {
+            var engine: com.ygoengine.YgoEngine? = null
+            val dir = learnFolder(key).apply { mkdirs() }
+            val ticker = launch {
+                while (true) {
+                    kotlinx.coroutines.delay(15 * 60_000L)
+                    shareFolder(dir, final = false)
+                }
+            }
+            try {
+                engine = AppPlatform.current.openEngine()
+                learnEngine = engine
+                work(engine, dir) { p -> updateLearn { it.copy(progress = p) } }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                CrashReports.note("Training stopped by an error: $e")
+                updateLearn { it.copy(error = e.message ?: e.toString()) }
+            } finally {
+                ticker.cancel()
+                learnEngine = null
+                engine?.close()
+                updateLearn { it.copy(running = null, runningMode = null, stopping = false, progress = null) }
+                refreshLearnStatuses()  // (sends what is left)
+            }
+        }
+    }
+
+    private val learnShareLock = kotlinx.coroutines.sync.Mutex()
+
+    /**
+     * Sends a session folder's saved work not sent yet to the engine's nightly learning: games
+     * (positions and policy examples) and combo-line batches. While its session runs ([final]
+     * false), the game written last waits for the next time. One upload at a time.
+     */
+    private suspend fun shareFolder(dir: java.io.File, final: Boolean) = learnShareLock.withLock {
+        val share = com.ygosandbox.app.history.LearningShare
+        runCatching {
+            val games = if (java.io.File(dir, "positions.jsonl").isFile) share.sendLocal(dir, skipLatest = !final) else 0
+            val lines = if (java.io.File(dir, "newpieces").isDirectory) share.sendLines(dir) else 0
+            games to lines
+        }.onSuccess { (g, n) -> if (g + n > 0) updateLearn { it.copy(shared = it.shared + g, sharedLines = it.sharedLines + n, shareError = null) } }
+            .onFailure { e -> updateLearn { it.copy(shareError = "Couldn't send to the engine's learning: ${e.message ?: e}") } }
+    }
+
+    private suspend fun shareAll() {
+        if (!com.ygosandbox.app.history.LearningShare.enabled) return
+        val dirs = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { learnRoot.listFiles { f -> f.isDirectory }?.toList().orEmpty() }
+        dirs.forEach { shareFolder(it, final = true) }
+    }
+
+    /** Stops after the game (or batch of hands) being played; what was finished is kept and sent. */
     fun stopLearning() {
         updateLearn { it.copy(stopping = true) }
         learnEngine?.cancel()
@@ -956,6 +1037,8 @@ class AppViewModel : ViewModel() {
     fun forgetLearning(key: String) {
         if (_ui.value.learn.running == key) return
         viewModelScope.launch {
+            // what wasn't sent yet goes first, then the folder
+            shareFolder(learnFolder(key), final = true)
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { learnFolder(key).deleteRecursively() }
             refreshLearnStatuses()
         }

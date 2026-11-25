@@ -812,6 +812,23 @@ class AppViewModel : ViewModel() {
         }
     }
 
+    /** Saves a deck as a .ydk file and hands it to the person (share sheet / save dialog), for YGO Omega. */
+    fun exportDeckYdk(deck: com.ygosandbox.app.model.SavedDeck) {
+        viewModelScope.launch {
+            runCatching {
+                val file = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val dir = java.io.File(AppPlatform.current.cacheDir, "shared").apply { mkdirs() }
+                    val name = deck.name.replace(Regex("[\\\\/:*?\"<>|]"), " ").trim().ifBlank { "deck" }
+                    java.io.File(dir, "$name.ydk").apply {
+                        writeText(com.ygosandbox.app.combos.OmegaDecks.writeYdk(deck.main, deck.extra, deck.side))
+                    }
+                }
+                AppPlatform.current.shareFile(file, "text/plain", "Deck for YGO Omega")
+            }.onSuccess { msg -> msg?.let(::showMessage) }
+                .onFailure { showMessage("Couldn't save the deck: ${it.message ?: it}") }
+        }
+    }
+
     /** The person's answer to the current decision (option index). */
     fun chooseDuelOption(index: Int) {
         humanChoice?.complete(index)

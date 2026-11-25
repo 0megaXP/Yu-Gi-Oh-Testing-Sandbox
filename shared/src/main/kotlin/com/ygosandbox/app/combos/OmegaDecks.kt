@@ -3,6 +3,10 @@ package com.ygosandbox.app.combos
 import com.ygosandbox.app.data.CardDatabase
 import com.ygosandbox.app.model.SourceDeck
 import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.util.Base64
+import java.util.zip.Deflater
 import java.util.zip.Inflater
 
 /**
@@ -57,6 +61,38 @@ object OmegaDecks {
         val (mixed, side) = runCatching { OmegaReplay.deckCode(code.trim().filterNot { it.isWhitespace() }) }.getOrNull() ?: return null
         val (extra, main) = mixed.filter { it > 0 }.partition { db.find(it)?.isExtraDeck == true }
         return deck(name.ifBlank { "Omega deck" }, main, extra, side.filter { it > 0 }).takeIf { it.hasList }
+    }
+
+    // ---- export (YGO Sandbox -> YGO Omega)
+
+    /** A deck as an Omega deck code: raw-deflated [Main+Extra count][Side count] then 4-byte passcodes. */
+    fun writeCode(main: List<Long>, extra: List<Long>, side: List<Long>): String {
+        val mixed = main + extra
+        require(mixed.size <= 255 && side.size <= 255) { "too many cards" }
+        val raw = ByteBuffer.allocate(2 + 4 * (mixed.size + side.size)).order(ByteOrder.LITTLE_ENDIAN)
+        raw.put(mixed.size.toByte()).put(side.size.toByte())
+        (mixed + side).forEach { raw.putInt(it.toInt()) }
+        val def = Deflater(Deflater.BEST_COMPRESSION, true)
+        try {
+            def.setInput(raw.array())
+            def.finish()
+            val out = ByteArrayOutputStream()
+            val buf = ByteArray(4096)
+            while (!def.finished()) out.write(buf, 0, def.deflate(buf))
+            return Base64.getEncoder().encodeToString(out.toByteArray())
+        } finally {
+            def.end()
+        }
+    }
+
+    /** A deck as a .ydk file, which YGO Omega (and other simulators) import. */
+    fun writeYdk(main: List<Long>, extra: List<Long>, side: List<Long>): String = buildString {
+        append("#created by YGO Sandbox\n#main\n")
+        main.forEach { append(it).append('\n') }
+        append("#extra\n")
+        extra.forEach { append(it).append('\n') }
+        append("!side\n")
+        side.forEach { append(it).append('\n') }
     }
 
     private fun deck(name: String, main: List<Long>, extra: List<Long>, side: List<Long>) =

@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
@@ -77,6 +78,7 @@ fun DeckEditorScreen(ui: UiState, vm: AppViewModel, id: String) {
     var adding by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
+    var exporting by remember { mutableStateOf(false) }
     var pager by remember { mutableStateOf<Pair<List<PagerItem>, Int>?>(null) }
     val closed = remember { mutableStateListOf<DeckPart>() }
 
@@ -99,6 +101,7 @@ fun DeckEditorScreen(ui: UiState, vm: AppViewModel, id: String) {
         Column(Modifier.fillMaxSize()) {
             Header(deck.name, onBack = { vm.back() }) {
                 GridToggle(ui.deckGrid, vm::setDeckGrid)
+                IconButton(onClick = { exporting = true }) { Icon(Icons.Default.Share, "Export to YGO Omega") }
                 IconButton(onClick = { renaming = true }) { Icon(Icons.Default.Edit, "Rename") }
                 IconButton(onClick = { deleting = true }) { Icon(Icons.Default.Delete, "Delete") }
             }
@@ -206,6 +209,7 @@ fun DeckEditorScreen(ui: UiState, vm: AppViewModel, id: String) {
         onDismiss = { renaming = false },
         onConfirm = { name, _ -> renaming = false; vm.renameDeck(deck.id, name) },
     )
+    if (exporting) OmegaExportDialog(deck, vm, onDismiss = { exporting = false })
     if (deleting) DeleteDeckDialog(deck.name, onDismiss = { deleting = false }, onConfirm = { deleting = false; vm.deleteMyDeck(deck.id) })
 }
 
@@ -414,4 +418,47 @@ private fun AddCardsPanel(
             }
         }
     }
+}
+
+/**
+ * Export to YGO Omega: the deck's Omega deck code, to copy and paste into Omega's deck import,
+ * or a .ydk file, which Omega imports too.
+ */
+@Composable
+private fun OmegaExportDialog(deck: SavedDeck, vm: AppViewModel, onDismiss: () -> Unit) {
+    val code = remember(deck) {
+        runCatching { com.ygosandbox.app.combos.OmegaDecks.writeCode(deck.main, deck.extra, deck.side) }.getOrNull()
+    }
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    var copied by remember { mutableStateOf(false) }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Export to YGO Omega") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "${deck.main.size} Main · ${deck.extra.size} Extra · ${deck.side.size} Side. Copy the deck code and paste it " +
+                        "into YGO Omega's deck import, or save a .ydk file and import that.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (code != null) OutlinedTextField(
+                    code, {}, readOnly = true, label = { Text("Omega deck code") }, maxLines = 3,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                else Text("This deck has too many cards for a deck code.", color = MaterialTheme.colorScheme.error)
+                if (copied) Text("Copied", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
+            }
+        },
+        confirmButton = {
+            if (code != null) Button(onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(code)); copied = true }) {
+                Text("Copy code")
+            }
+        },
+        dismissButton = {
+            Row {
+                androidx.compose.material3.TextButton(onClick = { vm.exportDeckYdk(deck); onDismiss() }) { Text("Save .ydk") }
+                androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Close") }
+            }
+        },
+    )
 }

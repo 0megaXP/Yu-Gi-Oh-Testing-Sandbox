@@ -2,8 +2,17 @@
 
 package com.ygosandbox.app.ui
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.InputChip
+import androidx.compose.material3.InputChipDefaults
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -16,10 +25,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -79,7 +85,11 @@ fun LearnScreen(ui: UiState, vm: AppViewModel) {
 
             val enabled = l.running == null
             Section("Deck to learn") {
-                DeckPicker(choices, l.deckKey, enabled, onPick = vm::setLearnDeck)
+                DeckTagPicker(
+                    field = if (l.deckKey == null) "Type a deck or archetype" else "Type to pick another deck",
+                    choices = choices, selected = listOfNotNull(l.deckKey), enabled = enabled,
+                    onAdd = vm::setLearnDeck, onRemove = { vm.setLearnDeck(null) },
+                )
                 l.deckKey?.let { key -> l.statuses[key]?.takeIf { it.games > 0 }?.let { st ->
                     Text(
                         "Already learned from ${st.games} games" + if (st.learned) "; it keeps going from there." else ".",
@@ -88,21 +98,14 @@ fun LearnScreen(ui: UiState, vm: AppViewModel) {
                 } }
             }
             Section("Plays against") {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    FilterChip(
-                        selected = l.opponents.isEmpty(), enabled = enabled, onClick = { vm.clearLearnOpponents() },
-                        label = { Text("The format's decks") },
-                    )
-                    choices.filter { it.key != l.deckKey }.forEach { c ->
-                        FilterChip(
-                            selected = c.key in l.opponents, enabled = enabled, onClick = { vm.toggleLearnOpponent(c.key) },
-                            label = { Text(c.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        )
-                    }
-                }
+                DeckTagPicker(
+                    field = "Add an opponent deck or archetype",
+                    choices = choices.filter { it.key != l.deckKey }, selected = l.opponents.toList(), enabled = enabled,
+                    onAdd = vm::toggleLearnOpponent, onRemove = vm::toggleLearnOpponent,
+                )
                 Text(
-                    if (l.opponents.isEmpty()) "The decks the nightly learning plays: the format's best decks from recent top cuts."
-                    else "${l.opponents.size} deck${if (l.opponents.size == 1) "" else "s"}, picked at random for each match.",
+                    if (l.opponents.isEmpty()) "None picked: it plays the format's decks, the best decks from recent top cuts that the nightly learning plays."
+                    else "${l.opponents.size} deck${if (l.opponents.size == 1) "" else "s"}, one picked at random for each match.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -159,32 +162,75 @@ private fun Section(title: String, content: @Composable () -> Unit) {
     }
 }
 
+/**
+ * Decks as tags, like the archetype search: type part of a deck's name or archetype and pick it
+ * from the suggestions; a tag's ✕ removes it.
+ */
 @Composable
-private fun DeckPicker(choices: List<DeckChoice>, key: String?, enabled: Boolean, onPick: (String) -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    Box {
-        OutlinedButton(onClick = { open = true }, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
-            Text(
-                choices.firstOrNull { it.key == key }?.name ?: "Pick a deck", modifier = Modifier.weight(1f),
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
-            )
-            Icon(Icons.Default.ArrowDropDown, null)
+private fun DeckTagPicker(
+    field: String,
+    choices: List<DeckChoice>,
+    selected: List<String>,
+    enabled: Boolean,
+    onAdd: (String) -> Unit,
+    onRemove: (String) -> Unit,
+) {
+    var query by remember { mutableStateOf("") }
+    val suggestions = remember(query, choices, selected) {
+        val q = query.trim()
+        if (q.isEmpty()) emptyList()
+        else {
+            val pool = choices.filter { it.key !in selected }
+            (pool.filter { it.name.startsWith(q, ignoreCase = true) } +
+                pool.filter { it.name.contains(q, ignoreCase = true) } +
+                pool.filter { it.detail.contains(q, ignoreCase = true) })
+                .distinctBy { it.key }.take(8)
         }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            if (choices.isEmpty()) DropdownMenuItem(text = { Text("No decks yet: build one in My decks") }, onClick = { open = false })
-            choices.forEach { c ->
-                DropdownMenuItem(
-                    text = {
-                        Column {
-                            Text(c.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(c.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                    },
-                    onClick = { open = false; onPick(c.key) },
+    }
+    if (selected.isNotEmpty()) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            selected.forEach { key ->
+                val c = choices.firstOrNull { it.key == key }
+                InputChip(
+                    selected = true, enabled = enabled,
+                    onClick = { onRemove(key) },
+                    label = { Text(c?.name ?: "A deck no longer in the app", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    trailingIcon = { Icon(Icons.Default.Close, "Remove", Modifier.size(InputChipDefaults.IconSize)) },
                 )
             }
         }
+    }
+    if (!enabled) return
+    OutlinedTextField(
+        value = query,
+        onValueChange = { query = it },
+        label = { Text(field) },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+        keyboardActions = KeyboardActions(onDone = {
+            suggestions.firstOrNull()?.let { onAdd(it.key); query = "" }
+        }),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    if (suggestions.isNotEmpty()) {
+        Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = RoundedCornerShape(12.dp)) {
+            Column {
+                suggestions.forEachIndexed { i, c ->
+                    if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    Column(
+                        Modifier.fillMaxWidth().clickable { onAdd(c.key); query = "" }.padding(horizontal = 16.dp, vertical = 10.dp),
+                    ) {
+                        Text(c.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            c.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+        }
+    } else if (query.isNotBlank()) {
+        Text("No deck matches \"${query.trim()}\"", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

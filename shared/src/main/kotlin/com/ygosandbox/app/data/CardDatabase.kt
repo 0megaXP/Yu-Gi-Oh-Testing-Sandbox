@@ -26,7 +26,18 @@ class CardDatabase() {
 
     val isDownloaded: Boolean get() = file.exists() && file.length() > 0
 
-    fun find(id: Long): Card? = byId[id]
+    fun find(id: Long): Card? = byId[id] ?: omegaArtwork(id)
+
+    /**
+     * An id the card list doesn't have, as YGO Omega writes some artworks: the official passcode
+     * plus 20, 30, 1, 2 or 10 (Ghost Ogre & Snow Rabbit 59438930 is 59438932 in Omega replays).
+     * The first of those that is a real card, as the engine reads them (carddb.cpp script_id).
+     */
+    private fun omegaArtwork(id: Long): Card? {
+        if (id <= 0 || byId.isEmpty()) return null
+        for (k in OMEGA_OFFSETS) byId[id - k]?.let { return it }
+        return null
+    }
 
     // ---------- Archetypes ----------
 
@@ -318,6 +329,8 @@ class CardDatabase() {
     }
 
     companion object {
+        private val OMEGA_OFFSETS = longArrayOf(20, 30, 1, 2, 10)
+
         const val API = "https://db.ygoprodeck.com/api/v7"
 
         /** A card named by at least this many archetype cards becomes part of the archetype. */

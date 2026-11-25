@@ -228,7 +228,7 @@ object LearningShare {
     }
 
     /**
-     * The combo lines "Deepen combo lines" found on this computer ([dir]/newpieces/*.json, one
+     * The combo lines "Deepen combo lines" found on this computer (the .json files in [dir]'s newpieces folder, one
      * file per batch of opening hands): uploaded as local-newpieces-*.json to ml-data, where the
      * nightly run merges them into the format's shared pool of pieces; each file is removed here
      * once sent. Returns how many files were sent.

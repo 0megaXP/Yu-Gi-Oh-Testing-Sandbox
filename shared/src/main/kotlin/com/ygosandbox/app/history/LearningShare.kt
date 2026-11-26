@@ -228,6 +228,29 @@ object LearningShare {
     }
 
     /**
+     * The training games that ran too long or got stuck (the engine's slow_games.jsonl in [dir]: a
+     * move the engine had to cancel, a game cut at its time limit, one that never ended, each with
+     * the game as a replay), not sent yet: uploaded as local-slow-*.jsonl.gz to ml-data, so the
+     * engine's problem can be replayed and fixed. Card ids and the engine's answers only. Returns
+     * how many were sent.
+     */
+    suspend fun sendSlow(dir: File): Int = withContext(Dispatchers.IO) {
+        if (!enabled || token.isBlank()) return@withContext 0
+        val f = File(dir, "slow_games.jsonl")
+        if (!f.isFile) return@withContext 0
+        val sentFile = File(dir, "uploaded_slow.json")
+        val sent = load(sentFile).toMutableSet()
+        val fresh = f.readLines().mapNotNull { l ->
+            runCatching { JSONObject(l) }.getOrNull()?.let { o -> (o.optString("game") + "@" + o.optLong("at")) to l }
+        }.filter { it.first !in sent }
+        if (fresh.isEmpty()) return@withContext 0
+        upload(gzip(fresh.joinToString("\n", postfix = "\n") { it.second }.toByteArray()), "local-slow")
+        sent += fresh.map { it.first }
+        save(sent, sentFile)
+        fresh.size
+    }
+
+    /**
      * The combo lines "Deepen combo lines" found on this computer (the .json files in [dir]'s newpieces folder, one
      * file per batch of opening hands): uploaded as local-newpieces-*.json to ml-data, where the
      * nightly run merges them into the format's shared pool of pieces; each file is removed here

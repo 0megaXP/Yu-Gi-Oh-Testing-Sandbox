@@ -1016,6 +1016,8 @@ class AppViewModel : ViewModel() {
         runCatching {
             val games = if (java.io.File(dir, "positions.jsonl").isFile) share.sendLocal(dir, skipLatest = !final) else 0
             val lines = if (java.io.File(dir, "newpieces").isDirectory) share.sendLines(dir) else 0
+            // games that ran too long or got stuck: as replays, for the engine's fixes
+            runCatching { share.sendSlow(dir) }
             games to lines
         }.onSuccess { (g, n) -> if (g + n > 0) updateLearn { it.copy(shared = it.shared + g, sharedLines = it.sharedLines + n, shareError = null) } }
             .onFailure { e -> updateLearn { it.copy(shareError = "Couldn't send to the engine's learning: ${e.message ?: e}") } }
